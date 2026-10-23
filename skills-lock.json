@@ -1,0 +1,47 @@
+{
+    "version": 1,
+    "skills": {
+        "agent-browser": {
+            "source": "vercel-labs/agent-browser",
+            "sourceType": "github",
+            "computedHash": "35478d4b0a33b3f98e22b7b4f3fe2d2919ebe72a6ca24b3a7175a9b17cc2788d"
+        },
+        "ai-sdk": {
+            "source": "vercel/ai",
+            "sourceType": "github",
+            "computedHash": "58ce68f628890c3925aea2b5435a649251ac182057541045c68fc19a27aaa0ec"
+        },
+        "better-auth-best-practices": {
+            "source": "better-auth/skills",
+            "sourceType": "github",
+            "computedHash": "a24359053259e55a75972cab4bf0b0e37e1393bac5f3756ec2e3a7b4b3778d2a"
+        },
+        "coss": {
+            "source": "cosscom/coss",
+            "sourceType": "github",
+            "skillPath": "apps/ui/skills/coss/SKILL.md",
+            "computedHash": "064a11fe3bc909430830e0ab1ee9dd3a363c48b4b7df909c6b364e5e76ef2363"
+        },
+        "coss-particles": {
+            "source": "cosscom/coss",
+            "sourceType": "github",
+            "skillPath": "apps/ui/skills/coss-particles/SKILL.md",
+            "computedHash": "a3448e835713342e4625d1f97a38265fea03cf840723ad23eeef0b53dcc21609"
+        },
+        "email-and-password-best-practices": {
+            "source": "better-auth/skills",
+            "sourceType": "github",
+            "computedHash": "9105cc29a462e8d07da45bbdbc90c3a60be3ba32fbd9d99d49944f5b971f8f96"
+        },
+        "frontend-design": {
+            "source": "anthropics/skills",
+            "sourceType": "github",
+            "computedHash": "063a0e6448123cd359ad0044cc46b0e490cc7964d45ef4bb9fd842bd2ffbca67"
+        },
+        "react-router-framework-mode": {
+            "source": "remix-run/agent-skills",
+            "sourceType": "github",
+            "computedHash": "26c5bdac2f686c47eb4c4b48b6cb52401cde1dc833e6d26408ddfb22ea83c5ca"
+        }
+    }
+}

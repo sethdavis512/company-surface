@@ -1,0 +1,14 @@
+{
+    "servers": {
+        "railway": {
+            "type": "stdio",
+            "command": "npx",
+            "args": ["-y", "@railway/mcp-server"]
+        },
+        "mastra": {
+            "command": "npx",
+            "args": ["-y", "@mastra/mcp-docs-server"],
+            "type": "stdio"
+        }
+    }
+}

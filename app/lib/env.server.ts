@@ -1,0 +1,308 @@
+import { z } from 'zod';
+import type { EnvWarning } from '~/lib/env-status';
+import { APP_NAME, LOCAL_DATABASE_NAME } from '~/config';
+import { parseAdminEmails } from '~/lib/admin-emails';
+import { log } from '~/lib/logger.server';
+
+const envSchema = z.object({
+    DATABASE_URL: z.url({ message: 'DATABASE_URL must be a valid URL' }),
+    BETTER_AUTH_SECRET: z
+        .string()
+        .min(32, 'BETTER_AUTH_SECRET must be at least 32 characters'),
+    BETTER_AUTH_BASE_URL: z.url(),
+    /**
+     * Comma-separated list of additional trusted origins for Better Auth.
+     * BETTER_AUTH_BASE_URL is always trusted; use this for preview deploys,
+     * staging hosts, or custom domains served by the same backend.
+     */
+    BETTER_AUTH_TRUSTED_ORIGINS: z
+        .string()
+        .optional()
+        .transform((value) =>
+            value
+                ? value
+                      .split(',')
+                      .map((s) => s.trim())
+                      .filter(Boolean)
+                : [],
+        ),
+    /**
+     * Optional first-admin bootstrap: comma-separated emails promoted to ADMIN
+     * once the address is verified (when they verify, or at their next
+     * sign-in). Unverified sign-ups are never promoted.
+     */
+    ADMIN_EMAILS: z
+        .string()
+        .optional()
+        .transform(parseAdminEmails)
+        .pipe(
+            z.array(
+                z.email({
+                    message: 'ADMIN_EMAILS must be comma-separated emails',
+                }),
+            ),
+        ),
+    /**
+     * Optional: when unset, AI chat is disabled but the app still boots. The
+     * Vercel AI SDK reads this from process.env at request time, so a missing
+     * key only fails the chat request (surfaced in the chat error UI), not
+     * startup. Set a real key to enable chat.
+     */
+    ANTHROPIC_API_KEY: z.string().optional(),
+    /**
+     * Optional: when unset, outgoing email is rendered and logged to the
+     * console instead of sent. Set a real key in production (production
+     * boot logs an `email_not_configured` warning without one).
+     */
+    RESEND_API_KEY: z.string().optional(),
+    EMAIL_FROM: z.string().default(`${APP_NAME} <onboarding@resend.dev>`),
+    /**
+     * Optional OAuth providers: a provider's login button only renders when
+     * both its client ID and secret are set. Callback URLs are
+     * <BETTER_AUTH_BASE_URL>/api/auth/callback/github and /callback/google.
+     */
+    GITHUB_CLIENT_ID: z.string().optional(),
+    GITHUB_CLIENT_SECRET: z.string().optional(),
+    GOOGLE_CLIENT_ID: z.string().optional(),
+    GOOGLE_CLIENT_SECRET: z.string().optional(),
+    /**
+     * Optional: enables Trigger.dev background jobs (async auth emails,
+     * async thread titles; the scheduled purge runs on Trigger's side).
+     * When unset, jobs.server.ts runs the same work inline.
+     */
+    TRIGGER_SECRET_KEY: z.string().optional(),
+    /**
+     * Optional Stripe billing. When STRIPE_SECRET_KEY is unset, billing.server.ts
+     * runs in stub mode (mock checkout/portal sessions, logged to the console) so
+     * local dev and CI need no Stripe account. STRIPE_WEBHOOK_SECRET verifies
+     * incoming webhook signatures; STRIPE_PRICE_ID is the default plan price.
+     */
+    STRIPE_SECRET_KEY: z.string().optional(),
+    STRIPE_WEBHOOK_SECRET: z.string().optional(),
+    STRIPE_PRICE_ID: z.string().optional(),
+    MASTRA_DATABASE_URL: z.url({
+        message: 'MASTRA_DATABASE_URL must be a valid URL',
+    }),
+    NODE_ENV: z
+        .enum(['development', 'production', 'test'])
+        .default('development'),
+    /**
+     * Disables Better Auth's rate limiter. Intended only for the E2E test
+     * server, which creates many sessions quickly; unset everywhere else so
+     * dev, CI, and prod keep the production limits.
+     */
+    DISABLE_AUTH_RATE_LIMIT: z
+        .enum(['true', 'false'])
+        .optional()
+        .transform((value) => value === 'true'),
+    /**
+     * Enables test-only endpoints (e.g. /api/test-mailbox). Intended only
+     * for the E2E test server; never set in production.
+     */
+    E2E_TEST_HOOKS: z
+        .enum(['true', 'false'])
+        .optional()
+        .transform((value) => value === 'true'),
+});
+
+type Env = z.infer<typeof envSchema>;
+
+/** Test-only switches that must never be enabled in production. */
+const TEST_ONLY_FLAGS = ['E2E_TEST_HOOKS', 'DISABLE_AUTH_RATE_LIMIT'] as const;
+
+const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
+
+/**
+ * `host:port/database` for a Postgres URL, with loopback aliases and the
+ * default port folded together so two spellings of one database compare
+ * equal. Credentials and query params are ignored. Null when unparseable.
+ */
+function databaseIdentity(url: string): string | null {
+    try {
+        const parsed = new URL(url);
+        const host = parsed.hostname.toLowerCase();
+        // With no path, Postgres connects to the database named after the user.
+        const database =
+            decodeURIComponent(parsed.pathname.slice(1)) ||
+            decodeURIComponent(parsed.username);
+        return `${LOOPBACK_HOSTS.has(host) ? 'localhost' : host}:${parsed.port || '5432'}/${database}`;
+    } catch {
+        return null;
+    }
+}
+
+/** Whether two Postgres URLs resolve to the same database. */
+export function isSameDatabase(a: string, b: string): boolean {
+    const identity = databaseIdentity(a);
+    return identity !== null && identity === databaseIdentity(b);
+}
+
+/**
+ * The schema validated at boot: envSchema plus cross-field rules.
+ *
+ * In every environment, MASTRA_DATABASE_URL must name a different database
+ * than DATABASE_URL. Mastra's store creates its mastra_* tables wherever it
+ * connects the first time chat uses it, and Prisma then reports them as drift
+ * and asks to reset the app database.
+ *
+ * With NODE_ENV=production, E2E_TEST_HOOKS would expose /api/test-role (anyone
+ * can become ADMIN) and /api/test-mailbox (password-reset links), and
+ * DISABLE_AUTH_RATE_LIMIT would remove brute-force protection, so either one
+ * fails boot instead of running.
+ */
+export const bootEnvSchema = envSchema.superRefine((value, ctx) => {
+    if (isSameDatabase(value.DATABASE_URL, value.MASTRA_DATABASE_URL)) {
+        ctx.addIssue({
+            code: 'custom',
+            path: ['MASTRA_DATABASE_URL'],
+            message:
+                'must name a different database than DATABASE_URL, or ' +
+                'Mastra creates its tables in the app database',
+        });
+    }
+
+    if (value.NODE_ENV !== 'production') return;
+    for (const key of TEST_ONLY_FLAGS) {
+        if (value[key]) {
+            ctx.addIssue({
+                code: 'custom',
+                path: [key],
+                message: 'test-only flag; must not be true in production',
+            });
+        }
+    }
+});
+
+const isProduction = process.env.NODE_ENV === 'production';
+
+/**
+ * Dev/test fallbacks for required infrastructure vars. When one is missing or
+ * invalid outside production, we substitute a fallback so the app still boots
+ * (and surface it in the dev banner) instead of crashing. Production never uses
+ * these — it fails fast on misconfiguration.
+ *
+ * The database URLs mirror docker-compose.dev.yml, so a fresh clone +
+ * `bun run docker:up` + `bun run dev` connects with zero configuration. Like
+ * Compose, they honor POSTGRES_PORT / MASTRA_POSTGRES_PORT (the host ports
+ * `bun run setup` picks when another project holds 5432/5433).
+ */
+const DEV_FALLBACKS: Record<string, string> = {
+    DATABASE_URL: `postgresql://postgres:postgres@localhost:${process.env.POSTGRES_PORT || 5432}/${LOCAL_DATABASE_NAME}`,
+    MASTRA_DATABASE_URL: `postgresql://postgres:postgres@localhost:${process.env.MASTRA_POSTGRES_PORT || 5433}/mastra`,
+    BETTER_AUTH_SECRET: 'dev-only-placeholder-secret-change-me-please',
+    BETTER_AUTH_BASE_URL: 'http://localhost:5173',
+};
+
+/** Why a fallback-backed infra var matters — shown in the dev banner. */
+const INFRA_EFFECTS: Record<string, string> = {
+    DATABASE_URL:
+        'Using the docker-compose default database — run `bun run docker:up`.',
+    MASTRA_DATABASE_URL: 'Using the docker-compose default AI-memory database.',
+    BETTER_AUTH_SECRET: 'Sessions use an insecure placeholder secret.',
+    BETTER_AUTH_BASE_URL: 'Auth callbacks use a placeholder URL.',
+};
+
+function reportAndExit(error: z.ZodError): never {
+    const formatted = error.issues
+        .map((i) => `  ✗ ${i.path.join('.')}: ${i.message}`)
+        .join('\n');
+
+    console.error(`\n❌ Invalid environment variables:\n${formatted}\n`);
+    console.error('→ Copy .env.example to .env and fill in the values.\n');
+    process.exit(1);
+}
+
+function validateEnv(): { env: Env; placeholdered: string[] } {
+    const result = bootEnvSchema.safeParse(process.env);
+    if (result.success) return { env: result.data, placeholdered: [] };
+
+    // Production must never run misconfigured — fail fast.
+    if (isProduction) reportAndExit(result.error);
+
+    // Dev/test: substitute placeholders for failing infra vars so the app can
+    // still boot. The banner (and this warning) tells the developer what's off.
+    const patched: NodeJS.ProcessEnv = { ...process.env };
+    const placeholdered: string[] = [];
+    for (const issue of result.error.issues) {
+        // Cross-field rules flag a set value that is wrong, not a missing one,
+        // so no placeholder applies; the retry below fails boot on them.
+        if (issue.code === 'custom') continue;
+        const key = String(issue.path[0]);
+        if (key in DEV_FALLBACKS && !placeholdered.includes(key)) {
+            patched[key] = DEV_FALLBACKS[key];
+            placeholdered.push(key);
+        }
+    }
+
+    const retry = bootEnvSchema.safeParse(patched);
+    // A failure here means a required var we don't have a placeholder for —
+    // unrecoverable, so fall back to fail-fast even in dev.
+    if (!retry.success) reportAndExit(retry.error);
+
+    console.warn(
+        `\n⚠ Missing/invalid env: ${placeholdered.join(', ')} — using dev ` +
+            `placeholders so the app can boot. See the in-app banner.\n`,
+    );
+    return { env: retry.data, placeholdered };
+}
+
+const resolved = validateEnv();
+
+export const env = resolved.env;
+
+/**
+ * Production-only boot warnings for email config. Without Resend, password
+ * reset and verification emails are only logged, so users cannot recover
+ * their accounts. This warns rather than fails so the production image still
+ * boots without a key (e.g. a CI Docker smoke test). Dev and test keep the
+ * console fallback silently. Pure so it can be unit-tested.
+ */
+export function productionEmailWarnings(
+    values: Pick<Env, 'NODE_ENV' | 'RESEND_API_KEY' | 'EMAIL_FROM'>,
+): string[] {
+    if (values.NODE_ENV !== 'production') return [];
+    if (!values.RESEND_API_KEY) {
+        return [
+            'RESEND_API_KEY is unset: password-reset and verification emails ' +
+                'are logged instead of sent, so users cannot recover their ' +
+                'accounts. Verify a sending domain in Resend and set ' +
+                'RESEND_API_KEY and EMAIL_FROM.',
+        ];
+    }
+    if (values.EMAIL_FROM.includes('@resend.dev')) {
+        return [
+            'EMAIL_FROM uses the resend.dev test sender, which only delivers ' +
+                'to the Resend account owner. Set EMAIL_FROM to an address on ' +
+                'a verified domain.',
+        ];
+    }
+    return [];
+}
+
+for (const message of productionEmailWarnings(env)) {
+    log.warn('email_not_configured', { message });
+}
+
+/**
+ * Build the dev banner's warning list. Only *required* infra vars that are
+ * missing/invalid (and so running on a dev placeholder) are surfaced — optional
+ * feature keys degrade gracefully and are deliberately not shown. Pure so it
+ * can be unit-tested without touching process.env.
+ */
+export function computeEnvWarnings(placeholdered: string[]): EnvWarning[] {
+    return placeholdered.map((key) => ({
+        key,
+        effect: INFRA_EFFECTS[key] ?? 'Using a development placeholder.',
+    }));
+}
+
+export const envWarnings: EnvWarning[] = computeEnvWarnings(
+    resolved.placeholdered,
+);
+
+/**
+ * Whether the in-app dev env banner should render: only outside production,
+ * and never during E2E runs (which set E2E_TEST_HOOKS) so it can't perturb
+ * test interactions or visual snapshots.
+ */
+export const shouldShowEnvBanner = !isProduction && !env.E2E_TEST_HOOKS;

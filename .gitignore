@@ -1,0 +1,30 @@
+.DS_Store
+.env
+/node_modules/
+
+# React Router
+/.react-router/
+/build/
+
+app/generated/prisma
+
+# Playwright
+/test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/
+
+# Claude Code (personal settings, memory, and worktrees)
+.claude/settings.local.json
+.claude/worktrees/
+.claude/projects/
+
+# Ralph run state (scripts/ralph/ralph.sh)
+/scripts/ralph/prd.json
+/scripts/ralph/progress.txt
+/scripts/ralph/archive/
+/scripts/ralph/.last-branch
+/scripts/ralph/.ralph-status.json
+
+# Lint cache (Prettier's cache lives in node_modules/.cache)
+.eslintcache
