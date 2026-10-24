@@ -3,7 +3,7 @@
  * instead of grepping "Iridium" across routes, components, emails, and meta
  * tags. Client-safe (no server imports) so it can be used anywhere.
  */
-export const APP_NAME = 'Iridium';
+export const APP_NAME = 'Company Surface';
 
 /** Footer/marketing tagline, rendered after the app name. */
 export const APP_TAGLINE = 'Go build. Be bold.';
@@ -32,7 +32,7 @@ export const APP_REPO_URL: string = 'https://github.com/sethdavis512/iridium';
  * file, so `bun run setup` rewrites them too; tools/identity.test.ts fails if
  * they drift. Change it by hand only together with those files.
  */
-export const APP_SLUG: string = 'iridium';
+export const APP_SLUG: string = 'company-surface';
 
 /** Local Postgres database name: the slug with hyphens as underscores. */
 export const LOCAL_DATABASE_NAME = APP_SLUG.replaceAll('-', '_');

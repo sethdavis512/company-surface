@@ -63,16 +63,12 @@ test.describe('Content Security Policy', () => {
         }
     });
 
-    test('landing page loads without CSP violations', async ({ page }) => {
-        await loadAndCheck(page, '/');
-    });
-
     test('login page loads without CSP violations', async ({ page }) => {
         await loadAndCheck(page, '/login');
     });
 
-    test('dashboard loads without CSP violations', async ({ authedPage }) => {
-        await loadAndCheck(authedPage, '/dashboard');
+    test('surface loads without CSP violations', async ({ authedPage }) => {
+        await loadAndCheck(authedPage, '/');
     });
 
     test('pre-paint theme script runs before any bundle loads', async ({

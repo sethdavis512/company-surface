@@ -57,10 +57,7 @@ export async function requireUser(request: Request) {
  * signup, reset-password). Throws a redirect on hit so callers can use this
  * inline as the first line of a loader.
  */
-export async function requireAnonymous(
-    request: Request,
-    redirectTo = '/dashboard',
-) {
+export async function requireAnonymous(request: Request, redirectTo = '/') {
     const user = await getUserFromSession(request);
     if (user) throw redirect(redirectTo);
 }

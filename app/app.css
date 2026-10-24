@@ -48,6 +48,14 @@
     --color-destructive: var(--destructive);
     --color-card-foreground: var(--card-foreground);
     --color-card: var(--card);
+    --color-canvas: var(--canvas);
+    --color-tint-rose: var(--tint-rose);
+    --color-tint-amber: var(--tint-amber);
+    --color-tint-emerald: var(--tint-emerald);
+    --color-tint-sky: var(--tint-sky);
+    --color-tint-violet: var(--tint-violet);
+    --color-tint-slate: var(--tint-slate);
+    --color-agent: var(--agent);
     --color-border: var(--border);
     --color-background: var(--background);
     --color-accent-foreground: var(--accent-foreground);
@@ -127,6 +135,17 @@
     --background: var(--color-white);
     --border: --alpha(var(--color-black) / 8%);
     --card: var(--color-white);
+    /* The surface canvas: a step darker than cards so windows stand out. */
+    --canvas: var(--color-neutral-100);
+    /* Window border colors people pick per window (WindowControls). */
+    --tint-rose: oklch(0.645 0.2 16);
+    --tint-amber: oklch(0.75 0.16 70);
+    --tint-emerald: oklch(0.65 0.15 160);
+    --tint-sky: oklch(0.65 0.14 235);
+    --tint-violet: oklch(0.6 0.2 293);
+    --tint-slate: oklch(0.55 0.03 257);
+    /* Marks what an agent made (AgentMark), apart from the six tints. */
+    --agent: oklch(0.58 0.24 318);
     --card-foreground: var(--color-neutral-800);
     --destructive: var(--color-red-500);
     --destructive-foreground: var(--color-red-700);
@@ -162,6 +181,18 @@
     );
     --border: --alpha(var(--color-white) / 6%);
     --card: color-mix(in srgb, var(--background) 98%, var(--color-white));
+    --canvas: color-mix(
+        in srgb,
+        var(--color-neutral-950) 70%,
+        var(--color-black)
+    );
+    --tint-rose: oklch(0.72 0.17 16);
+    --tint-amber: oklch(0.8 0.15 75);
+    --tint-emerald: oklch(0.72 0.14 160);
+    --tint-sky: oklch(0.74 0.13 235);
+    --tint-violet: oklch(0.7 0.17 293);
+    --tint-slate: oklch(0.7 0.03 257);
+    --agent: oklch(0.74 0.17 318);
     --card-foreground: var(--color-neutral-100);
     --destructive: color-mix(
         in srgb,
@@ -190,6 +221,28 @@
     --success-foreground: var(--color-emerald-400);
     --warning: var(--color-amber-500);
     --warning-foreground: var(--color-amber-400);
+}
+
+/* A card that arrives while the surface is open fades and grows in. It
+   animates `scale` (not `transform`, which places the card on the canvas)
+   and `opacity` (not `transition`, which the canvas uses for other moves). */
+@keyframes card-in {
+    from {
+        opacity: 0;
+        scale: 0.96;
+    }
+}
+
+@utility animate-card-in {
+    animation: card-in 320ms ease-out;
+}
+
+/* Scrolls without showing a scrollbar (wheel, trackpad, touch, keys). */
+@utility scrollbar-none {
+    scrollbar-width: none;
+    &::-webkit-scrollbar {
+        display: none;
+    }
 }
 
 @layer base {

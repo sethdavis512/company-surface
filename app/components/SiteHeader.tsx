@@ -1,8 +1,6 @@
 import { useState } from 'react';
 import { MenuIcon, PentagonIcon } from 'lucide-react';
-import { Form, Link, NavLink, useRouteLoaderData } from 'react-router';
-import { cx } from 'cva.config';
-import { Container } from '~/components/Container';
+import { Form, Link, useRouteLoaderData } from 'react-router';
 import { ThemeToggle } from '~/components/ThemeToggle';
 import { Button } from '~/components/ui/button';
 import {
@@ -18,39 +16,11 @@ import { APP_NAME } from '~/config';
 
 const MOBILE_NAV_ID = 'mobile-nav';
 
-const desktopNavLinkClassName = ({ isActive }: { isActive: boolean }) =>
-    cx(
-        'rounded-lg px-3 py-1.5 text-sm transition-colors',
-        isActive ? 'bg-accent font-semibold' : 'hover:bg-accent/60',
-    );
-
-const mobileNavLinkClassName = ({ isActive }: { isActive: boolean }) =>
-    cx(
-        'block rounded-lg px-3 py-2 text-sm transition-colors',
-        isActive
-            ? 'bg-accent font-semibold'
-            : 'hover:bg-accent text-foreground',
-    );
-
 export function SiteHeader() {
     const data = useRouteLoaderData<typeof rootLoader>('root');
     const isAuthenticated = Boolean(data?.isAuthenticated);
-    const isAdmin = data?.role === 'ADMIN';
     const isImpersonating = Boolean(data?.isImpersonating);
     const [isMenuOpen, setIsMenuOpen] = useState(false);
-
-    const navItems = [
-        { to: '/', label: 'Home' },
-        ...(isAuthenticated
-            ? [
-                  { to: '/dashboard', label: 'Dashboard' },
-                  { to: '/chat', label: 'Chat' },
-                  { to: '/notes', label: 'Notes' },
-                  { to: '/settings', label: 'Settings' },
-              ]
-            : []),
-        ...(isAdmin ? [{ to: '/admin', label: 'Admin' }] : []),
-    ];
 
     const closeMenu = () => setIsMenuOpen(false);
 
@@ -78,7 +48,7 @@ export function SiteHeader() {
                 >
                     Skip to main content
                 </a>
-                <Container className="px-4">
+                <div className="w-full px-4">
                     <nav
                         aria-label="Site"
                         className="flex w-full items-center justify-between gap-4"
@@ -116,19 +86,6 @@ export function SiteHeader() {
                                             aria-label="Mobile navigation"
                                         >
                                             <ul className="flex flex-col gap-1">
-                                                {navItems.map((item) => (
-                                                    <li key={item.to}>
-                                                        <NavLink
-                                                            to={item.to}
-                                                            onClick={closeMenu}
-                                                            className={
-                                                                mobileNavLinkClassName
-                                                            }
-                                                        >
-                                                            {item.label}
-                                                        </NavLink>
-                                                    </li>
-                                                ))}
                                                 {isAuthenticated ? (
                                                     <li>
                                                         <Form
@@ -166,23 +123,6 @@ export function SiteHeader() {
                                 <PentagonIcon aria-hidden="true" /> {APP_NAME}
                             </Link>
                         </div>
-                        <nav
-                            aria-label="Main navigation"
-                            className="hidden lg:block"
-                        >
-                            <ul className="flex items-center gap-1">
-                                {navItems.map((item) => (
-                                    <li key={item.to}>
-                                        <NavLink
-                                            to={item.to}
-                                            className={desktopNavLinkClassName}
-                                        >
-                                            {item.label}
-                                        </NavLink>
-                                    </li>
-                                ))}
-                            </ul>
-                        </nav>
                         <div className="flex items-center gap-2">
                             <ThemeToggle />
                             <div className="hidden lg:block">
@@ -203,7 +143,7 @@ export function SiteHeader() {
                             </div>
                         </div>
                     </nav>
-                </Container>
+                </div>
             </header>
         </div>
     );

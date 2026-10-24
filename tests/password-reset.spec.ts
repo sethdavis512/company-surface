@@ -70,7 +70,7 @@ test.describe('Password reset', () => {
         );
 
         await loginViaUI(page, { email, password: newPassword });
-        await expect(page).toHaveURL(/\/dashboard$/);
+        await expect(page).toHaveURL(/\/$/);
 
         await context.close();
     });

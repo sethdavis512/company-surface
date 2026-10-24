@@ -1,6 +1,20 @@
-# Iridium
+# Company Surface
 
-A full-stack starter kit for shipping AI-powered products. Clone the repo, configure your environment, and have a working application with authentication, AI chat, and agent tools in minutes.
+One place for every kind of company information and how it relates. Today that is a canvas of windows (phone-sized chats and 16:9 documents, joined by their relations) built on [Trellis](https://github.com/sethdavis512/trellis), with mock data and a mock chat service. Slides, sites, and more come later.
+
+It started as a copy of the Iridium template. The sections below still describe that template; the chat, notes, dashboard, settings, and admin routes they mention are gone (see Routes), while their libraries remain in the repo, unused.
+
+## Connect an agent (MCP)
+
+Agents can work on the surface through MCP at `/api/mcp` (Streamable HTTP). Tools: `list_spaces`, `create_space`, `create_surface`, `list_cards`, `search`, `get_card`, `list_people`, `create_chat`, `post_message`, `create_document`, `append_to_document`, `link_cards`, `create_chart`, `duplicate_card`, `add_video`, `add_image`, `add_note`, `update_note`, `add_sketch`, `add_web_page`, `navigate_web_page`, `create_board`, `create_issue`, `update_issue` (status, priority, title, description, assignee), `comment_on_issue`, `open_pull_request`, `set_pull_request_status`, `list_views`, `save_view`, `delete_view`, `set_card_color`, `restack_card`, `rename_card`, `lock_card`, `unlink_cards`, `add_shape`, `update_shape`, and `delete_card`. Tools that used to be named for items or windows (`list_items`, `get_item`, `link_items`, `duplicate_item`, `set_window_color`, `restack_window`) still answer to those names. Whatever an agent creates or changes shows up on open canvases within a couple of seconds. `save_view` can frame items by id: each person's canvas then fits those windows wherever they are, at its own size. People edit documents in place when they focus one (type `@` to link an item, `/` for headings, lists, and item cards); agents write and read them as Markdown; `[text](item:<id>)` links a phrase to another item and a line of `![](item:<id>)` embeds a card for it (they are stored as Portable Text).
+
+With the dev server running, this repo's `.mcp.json` points Claude Code at it (approve the server when asked). To add it anywhere else:
+
+```sh
+claude mcp add --transport http company-surface http://localhost:5173/api/mcp
+```
+
+The data is a mock: an in-memory store shared by everyone, reset when the server restarts. Without `MCP_API_KEY` the endpoint is open in development and off in production; once it's set, agents must send `Authorization: Bearer <MCP_API_KEY>` (`claude mcp add ... --header "Authorization: Bearer <key>"`).
 
 ## Features
 
@@ -376,23 +390,19 @@ Google Cloud Run, …).
 
 ## Routes
 
-| Route              | Description                                    |
-| ------------------ | ---------------------------------------------- |
-| `/`                | Home — overview of what Iridium includes       |
-| `/login`           | Sign in or create an account                   |
-| `/forgot-password` | Request a password reset email                 |
-| `/reset-password`  | Choose a new password from an emailed link     |
-| `/dashboard`       | Stats, quick actions, and recent activity      |
-| `/chat`            | AI chat with searchable thread sidebar         |
-| `/notes`           | Notes CRUD with search and pagination          |
-| `/settings`        | Profile, password change, account deletion     |
-| `/admin`           | User roles, ban/unban, impersonation           |
-| `/api/chat`        | Chat API endpoint (model picker, regeneration) |
-| `/api/auth/*`      | Auth API endpoints                             |
-| `/api/theme`       | Theme cookie endpoint                          |
-| `/healthcheck`     | Health status                                  |
-| `/robots.txt`      | Robots policy                                  |
-| `/sitemap.xml`     | Sitemap of public routes                       |
+| Route                                | Description                                |
+| ------------------------------------ | ------------------------------------------ |
+| `/`                                  | Spaces and their surfaces (signed in only) |
+| `/surfaces/:surfaceId`               | One surface's canvas of cards              |
+| `/surfaces/:surfaceId/cards/:itemId` | The canvas, focused on one card            |
+| `/surfaces/:surfaceId/views/:viewId` | The canvas at a saved view                 |
+| `/api/mcp`                           | MCP endpoint for agents (see below)        |
+| `/login`                             | Sign in or create an account               |
+| `/forgot-password`                   | Request a password reset email             |
+| `/reset-password`                    | Choose a new password from an emailed link |
+| `/api/auth/*`                        | Auth API endpoints                         |
+| `/api/theme`                         | Theme cookie endpoint                      |
+| `/healthcheck`                       | Health status                              |
 
 ## Optional Agent Tooling
 

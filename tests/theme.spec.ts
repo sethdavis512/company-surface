@@ -1,4 +1,4 @@
-import { test, expect, waitForHydration } from './fixtures';
+import { test, expect, createFreshUser, waitForHydration } from './fixtures';
 
 test.describe('Theme switching', () => {
     test('defaults to system (no dark class in light color scheme)', async ({
@@ -21,7 +21,7 @@ test.describe('Theme switching', () => {
     });
 
     test('selecting dark sets the dark class and persists across reload without FOUC', async ({
-        page,
+        authedPage: page,
     }) => {
         await page.goto('/');
 
@@ -46,7 +46,12 @@ test.describe('Theme switching', () => {
         // Regression: the pre-paint script adds .dark imperatively for
         // "system", which React's vDOM never sees; switching to Light must
         // still remove it (root.tsx reconciliation effect).
-        const context = await browser.newContext({ colorScheme: 'dark' });
+        const baseURL = test.info().project.use.baseURL!;
+        const context = await browser.newContext({
+            baseURL,
+            colorScheme: 'dark',
+        });
+        await createFreshUser(context, baseURL, 'theme');
         const page = await context.newPage();
         await page.goto('/');
         await expect(page.locator('html')).toHaveClass(/\bdark\b/);
@@ -59,7 +64,9 @@ test.describe('Theme switching', () => {
         await context.close();
     });
 
-    test('selecting light removes the dark class', async ({ page }) => {
+    test('selecting light removes the dark class', async ({
+        authedPage: page,
+    }) => {
         await page.goto('/');
 
         await waitForHydration(page);

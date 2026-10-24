@@ -21,7 +21,7 @@ export const TEST_USER_BOB = {
 };
 
 /** Where the auth form sends users on success. */
-export const REDIRECT_PATH = '/dashboard';
+export const REDIRECT_PATH = '/';
 
 /**
  * Wait for React hydration (html[data-hydrated], set by root.tsx). Required
@@ -88,82 +88,6 @@ export async function createAuthedContext(
     const context = await browser.newContext({ baseURL });
     await createFreshUser(context, baseURL, tag);
     return context;
-}
-
-/**
- * Create a thread for the user owning `context` and return its id. Uses the
- * /chat action (the same path the New Thread button hits) and reads the id
- * from the redirect Location.
- */
-export async function createThreadViaApi(
-    context: BrowserContext,
-): Promise<string> {
-    const res = await context.request.post('/chat', {
-        form: { intent: 'new-thread' },
-        maxRedirects: 0,
-    });
-
-    const location = res.headers()['location'];
-    if (!location) {
-        throw new Error(
-            `Expected a redirect creating a thread, got ${res.status()}`,
-        );
-    }
-
-    return location.split('/').pop()!;
-}
-
-/**
- * Sign up a brand-new user and promote them to ADMIN via the test-only
- * /api/test-role hook. Signs in again afterwards so the session cookie
- * (which caches the role for up to 5 minutes) reflects the promotion.
- */
-export async function createFreshAdmin(
-    context: BrowserContext,
-    baseURL: string,
-    tag: string | number = 'x',
-) {
-    const { email, password } = await createFreshUser(
-        context,
-        baseURL,
-        `admin-${tag}`,
-    );
-
-    const promote = await context.request.post('/api/test-role', {
-        form: { email, role: 'ADMIN' },
-    });
-    if (!promote.ok()) {
-        throw new Error(`Admin promotion failed (${promote.status()})`);
-    }
-
-    const signIn = await context.request.post('/api/auth/sign-in/email', {
-        headers: { Origin: baseURL },
-        data: { email, password },
-    });
-    if (!signIn.ok()) {
-        throw new Error(`Admin re-sign-in failed (${signIn.status()})`);
-    }
-
-    return { email, password };
-}
-
-/**
- * Create a note for the user owning `context` via the /notes action.
- */
-export async function createNoteViaApi(
-    context: BrowserContext,
-    { title, content }: { title: string; content: string },
-): Promise<void> {
-    const res = await context.request.post('/notes', {
-        form: { intent: 'create-note', title, content },
-        maxRedirects: 0,
-    });
-
-    if (res.status() !== 302) {
-        throw new Error(
-            `Expected a redirect creating a note, got ${res.status()}`,
-        );
-    }
 }
 
 /**

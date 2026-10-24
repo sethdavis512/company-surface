@@ -24,6 +24,6 @@ export default defineConfig({
         // `bun run setup` rewrites it; tools/identity.test.ts checks it.
         url:
             process.env.DATABASE_URL ??
-            `postgresql://postgres:postgres@localhost:${process.env.POSTGRES_PORT || 5432}/iridium`,
+            `postgresql://postgres:postgres@localhost:${process.env.POSTGRES_PORT || 5432}/company_surface`,
     },
 });

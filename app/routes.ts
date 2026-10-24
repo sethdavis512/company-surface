@@ -7,7 +7,6 @@ import {
 } from '@react-router/dev/routes';
 
 export default [
-    layout('routes/layouts/marketing.tsx', [index('routes/landing.tsx')]),
     layout('routes/layouts/auth.tsx', [
         route('/login', 'routes/login.tsx'),
         route('/forgot-password', 'routes/forgot-password.tsx'),
@@ -16,21 +15,17 @@ export default [
     route('/logout', 'routes/logout.tsx'),
     route('/stop-impersonating', 'routes/stop-impersonating.tsx'),
     layout('routes/layouts/app.tsx', [
-        route('/dashboard', 'routes/dashboard.tsx'),
-        route('/notes', 'routes/notes.tsx'),
-        route('/settings', 'routes/settings.tsx'),
-        route('/admin', 'routes/admin.tsx'),
-        route('/chat', 'routes/chat.tsx', [
-            index('routes/chat-index.tsx'),
-            route(':threadId', 'routes/thread.tsx'),
+        index('routes/home.tsx'),
+        route('surfaces/:surfaceId', 'routes/surface.tsx', [
+            index('routes/surface-index.tsx'),
+            route('cards/:itemId', 'routes/surface-item.tsx'),
+            route('views/:viewId', 'routes/surface-view.tsx'),
         ]),
     ]),
     route('/healthcheck', 'routes/healthcheck.ts'),
-    route('/robots.txt', 'routes/robots.ts'),
-    route('/sitemap.xml', 'routes/sitemap.ts'),
     ...prefix('/api', [
         route('/auth/*', 'routes/api-auth.ts'),
-        route('/chat', 'routes/api-chat.ts'),
+        route('/mcp', 'routes/api-mcp.ts'),
         route('/theme', 'routes/api-theme.ts'),
         route('/test-mailbox', 'routes/api-test-mailbox.ts'),
         route('/test-role', 'routes/api-test-role.ts'),

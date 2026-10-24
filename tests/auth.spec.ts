@@ -1,7 +1,7 @@
 import { test, expect, TEST_USER, waitForHydration } from './fixtures';
 
 test.describe('Login', () => {
-    test('logs in with valid credentials and redirects to dashboard', async ({
+    test('logs in with valid credentials and lands on the spaces', async ({
         page,
     }) => {
         await page.goto('/login');
@@ -10,9 +10,9 @@ test.describe('Login', () => {
         await page.getByPlaceholder('Your password').fill(TEST_USER.password);
         await page.getByRole('button', { name: 'Login' }).click();
 
-        await expect(page).toHaveURL(/\/dashboard/);
+        await expect(page).toHaveURL(/\/$/);
         await expect(
-            page.getByRole('heading', { name: /^Hello / }),
+            page.getByRole('heading', { name: 'Spaces', level: 1 }),
         ).toBeVisible();
     });
 
@@ -111,9 +111,7 @@ test.describe('Registration', () => {
         await expect(page.getByText('Name is required')).toBeVisible();
     });
 
-    test('registers a new user and redirects to dashboard', async ({
-        page,
-    }) => {
+    test('registers a new user and lands on the spaces', async ({ page }) => {
         const unique = `e2e-register-${crypto.randomUUID()}@iridium.test`;
         await page.goto('/login');
         await waitForHydration(page);
@@ -122,9 +120,9 @@ test.describe('Registration', () => {
         await page.getByPlaceholder('name@example.com').fill(unique);
         await page.getByPlaceholder('Your password').fill('password123');
         await page.getByRole('button', { name: 'Register' }).click();
-        await expect(page).toHaveURL(/\/dashboard/);
+        await expect(page).toHaveURL(/\/$/);
         await expect(
-            page.getByRole('heading', { name: /^Hello / }),
+            page.getByRole('heading', { name: 'Spaces', level: 1 }),
         ).toBeVisible();
     });
 
@@ -157,17 +155,12 @@ test.describe('Logout', () => {
     test('protected pages redirect to login when logged out', async ({
         page,
     }) => {
-        await page.goto('/dashboard');
+        await page.goto('/');
         await expect(page).toHaveURL(/\/login/);
     });
 });
 
 test.describe('Auth-conditional navigation', () => {
-    test('shows login link when unauthenticated', async ({ page }) => {
-        await page.goto('/');
-        await expect(page.getByRole('link', { name: 'Login' })).toBeVisible();
-    });
-
     test('shows logout button when authenticated', async ({
         authedPage: page,
     }) => {

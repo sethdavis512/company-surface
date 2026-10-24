@@ -21,7 +21,7 @@ const formSchema = z.object({
 
 type FormValues = z.infer<typeof formSchema>;
 
-const REDIRECT_PATH = '/dashboard';
+const REDIRECT_PATH = '/';
 
 const PROVIDER_LABELS: Record<SocialProvider, string> = {
     github: 'GitHub',

@@ -72,6 +72,18 @@ const envSchema = z.object({
      */
     TRIGGER_SECRET_KEY: z.string().optional(),
     /**
+     * Optional: the bearer token agents send to /api/mcp. When set, every MCP
+     * request must carry it. When unset, MCP is open in development (for local
+     * agents) and switched off in production.
+     */
+    MCP_API_KEY: z
+        .string()
+        .optional()
+        .transform((value) => value?.trim() || undefined)
+        .refine((value) => value === undefined || value.length >= 32, {
+            message: 'MCP_API_KEY must be at least 32 characters',
+        }),
+    /**
      * Optional Stripe billing. When STRIPE_SECRET_KEY is unset, billing.server.ts
      * runs in stub mode (mock checkout/portal sessions, logged to the console) so
      * local dev and CI need no Stripe account. STRIPE_WEBHOOK_SECRET verifies
