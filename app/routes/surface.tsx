@@ -1,4 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import {
+    useEffect,
+    useMemo,
+    useRef,
+    useState,
+    useSyncExternalStore,
+} from 'react';
 import { ArrowLeftIcon, PanelLeftCloseIcon, SearchIcon } from 'lucide-react';
 import {
     data,
@@ -7,6 +13,7 @@ import {
     Link,
     Outlet,
     useLocation,
+    useFetchers,
     useParams,
     useRevalidator,
     type ShouldRevalidateFunctionArgs,
@@ -39,12 +46,14 @@ import {
     serializeNavCollapsed,
     serializeNavOrder,
 } from '~/lib/nav-order.server';
+import { markChanged, type SurfaceEvent } from '~/models/surface-events.server';
 import {
-    ME_ID,
     SurfaceConflictError,
     SurfaceError,
     createIssue,
     getSurfaceForUser,
+    rememberPerson,
+    surfaceVersion,
     moveWindows,
     addCard,
     updateNote,
@@ -77,6 +86,7 @@ import {
     WINDOW_COLOR_NAMES,
     itemPath,
     pushRecent,
+    type Person,
     type SurfaceItem,
 } from '~/lib/surface';
 import type { Route } from './+types/surface';
@@ -119,6 +129,7 @@ export async function loader({ request, context, params }: Route.LoaderArgs) {
     if (!surface) throw data('Surface not found', { status: 404 });
     return {
         surface,
+        version: surfaceVersion(params.surfaceId),
         navOrder: await getNavOrder(request),
         navCollapsed: await getNavCollapsed(request),
         navPanel: readNavPanel(request.headers.get('Cookie')),
@@ -357,8 +368,17 @@ const intentSchema = z.discriminatedUnion('intent', [
  * issues, and the nav saves and deletes views. All submit with fetchers (`action="/"`), so the page
  * never navigates, and the loader re-runs to confirm.
  */
-export async function action({ request, context, params }: Route.ActionArgs) {
-    requireUserFromContext(context);
+export async function action(args: Route.ActionArgs) {
+    try {
+        return await applyIntent(args);
+    } finally {
+        // Everyone else on the surface hears about it from the event stream.
+        markChanged();
+    }
+}
+
+async function applyIntent({ request, context, params }: Route.ActionArgs) {
+    const me = rememberPerson(requireUserFromContext(context));
     const parsed = intentSchema.safeParse(
         Object.fromEntries(await request.formData()),
     );
@@ -382,7 +402,7 @@ export async function action({ request, context, params }: Route.ActionArgs) {
                     input.x === undefined || input.y === undefined
                         ? undefined
                         : { x: input.x, y: input.y },
-                authorId: ME_ID,
+                authorId: me.id,
             });
             if (card.kind === 'document') {
                 throw redirect(itemPath(params.surfaceId, card.id));
@@ -403,7 +423,7 @@ export async function action({ request, context, params }: Route.ActionArgs) {
                 documentId: input.documentId,
                 blocks: input.blocks,
                 baseUpdatedAt: input.baseUpdatedAt,
-                authorId: ME_ID,
+                authorId: me.id,
             });
             return { error: null, updatedAt: doc.updatedAt };
         } catch (error) {
@@ -447,7 +467,7 @@ export async function action({ request, context, params }: Route.ActionArgs) {
         if (input.intent === 'post-message') {
             postMessage({
                 chatId: input.chatId,
-                authorId: ME_ID,
+                authorId: me.id,
                 text: input.text,
             });
         } else if (input.intent === 'save-view') {
@@ -478,7 +498,7 @@ export async function action({ request, context, params }: Route.ActionArgs) {
                 boardId: input.boardId,
                 issueId: input.issueId,
                 text: input.text,
-                authorId: ME_ID,
+                authorId: me.id,
             });
         } else if (input.intent === 'move-issue') {
             updateIssue({
@@ -492,7 +512,7 @@ export async function action({ request, context, params }: Route.ActionArgs) {
                 boardId: input.boardId,
                 title: input.title,
                 status: input.status,
-                authorId: ME_ID,
+                authorId: me.id,
             });
         } else if (input.intent === 'link-cards') {
             if (input.from !== input.to) {
@@ -527,7 +547,7 @@ export async function action({ request, context, params }: Route.ActionArgs) {
         } else if (input.intent === 'duplicate') {
             duplicateItem({
                 itemId: input.itemId,
-                authorId: ME_ID,
+                authorId: me.id,
                 position:
                     input.x === undefined || input.y === undefined
                         ? undefined
@@ -588,29 +608,176 @@ function useSearchShortcut(setOpen: (open: boolean) => void) {
     }, [setOpen]);
 }
 
-/** How often the open surface checks for changes made elsewhere (agents, replies). */
-const POLL_MS = 2000;
+/** How often the surface reloads while its event stream is down. */
+const FALLBACK_POLL_MS = 5000;
+/** How long to wait before reopening a stream the server refused. */
+const REOPEN_MS = 5000;
+
+type StreamState = {
+    surfaceId: string;
+    connected: boolean;
+    /** The surface's version, as the stream last said. */
+    version: string | null;
+    /** Everyone viewing the surface, you included. */
+    people: Person[];
+};
+
+function subscribeToVisibility(onChange: () => void) {
+    document.addEventListener('visibilitychange', onChange);
+    return () => document.removeEventListener('visibilitychange', onChange);
+}
+
+function useTabVisible() {
+    return useSyncExternalStore(
+        subscribeToVisibility,
+        () => document.visibilityState === 'visible',
+        () => true,
+    );
+}
+
+let pointerPressed = false;
+
+function subscribeToPointer(onChange: () => void) {
+    const press = (pressed: boolean) => () => {
+        pointerPressed = pressed;
+        onChange();
+    };
+    const down = press(true);
+    const up = press(false);
+    // Capture phase: drags (windows, the nav's edge, issues) stop the
+    // events from bubbling.
+    window.addEventListener('pointerdown', down, true);
+    window.addEventListener('pointerup', up, true);
+    window.addEventListener('pointercancel', up, true);
+    return () => {
+        window.removeEventListener('pointerdown', down, true);
+        window.removeEventListener('pointerup', up, true);
+        window.removeEventListener('pointercancel', up, true);
+    };
+}
+
+/** True while a mouse button, finger, or pen is down (a drag, mostly). */
+function usePointerPressed() {
+    return useSyncExternalStore(
+        subscribeToPointer,
+        () => pointerPressed,
+        () => false,
+    );
+}
 
 /**
- * Re-runs the loaders on an interval while the tab is visible, so items and
- * messages that agents add (through `/api/mcp`) show up without a reload.
+ * Keeps the open surface current. Its event stream
+ * (`/api/surfaces/:surfaceId/events`) says when anyone (a person, an agent,
+ * a mock reply) changed it, as a new version, and who is here. The page
+ * reloads once per version it isn't showing, when the tab is visible,
+ * nothing of ours is in flight (a pending save's own reload may bring it),
+ * and no drag is under way (re-rendering the canvas mid-drag stutters it).
+ * While the stream is down, it polls instead. Returns who is here.
  */
-function usePollForChanges() {
+function useSurfaceEvents(surfaceId: string, loadedVersion: string | null) {
     const revalidator = useRevalidator();
     const latest = useRef(revalidator);
     useEffect(() => {
         latest.current = revalidator;
     });
+    const fetchers = useFetchers();
+    const pressed = usePointerPressed();
+    const busy =
+        pressed ||
+        revalidator.state !== 'idle' ||
+        fetchers.some((fetcher) => fetcher.state !== 'idle');
+    const visible = useTabVisible();
+    const [stream, setStream] = useState<StreamState>({
+        surfaceId,
+        connected: false,
+        version: null,
+        people: [],
+    });
+    const current =
+        stream.surfaceId === surfaceId
+            ? stream
+            : { surfaceId, connected: false, version: null, people: [] };
 
     useEffect(() => {
+        let source: EventSource | undefined;
+        let reopen: ReturnType<typeof setTimeout> | undefined;
+        const update = (change: Partial<StreamState>) =>
+            setStream((previous) => ({
+                ...(previous.surfaceId === surfaceId
+                    ? previous
+                    : {
+                          surfaceId,
+                          connected: false,
+                          version: null,
+                          people: [],
+                      }),
+                ...change,
+            }));
+        const read = (event: Event) =>
+            JSON.parse((event as MessageEvent<string>).data) as SurfaceEvent;
+
+        const open = () => {
+            source = new EventSource(
+                `/api/surfaces/${encodeURIComponent(surfaceId)}/events`,
+            );
+            source.onopen = () => update({ connected: true });
+            source.onerror = () => {
+                update({ connected: false });
+                // The browser retries a dropped stream by itself, but not
+                // one the server refused (an error status, a sign-in page).
+                if (source?.readyState === EventSource.CLOSED) {
+                    reopen = setTimeout(open, REOPEN_MS);
+                }
+            };
+            source.addEventListener('changed', (event) => {
+                const message = read(event);
+                if (message.type === 'changed') {
+                    update({ version: message.version });
+                }
+            });
+            source.addEventListener('presence', (event) => {
+                const message = read(event);
+                if (message.type === 'presence') {
+                    update({ people: message.people });
+                }
+            });
+        };
+        open();
+        return () => {
+            clearTimeout(reopen);
+            source?.close();
+        };
+    }, [surfaceId]);
+
+    // One reload per version we aren't showing. Never more: a change the
+    // stream didn't announce must not turn this into a reload loop.
+    const reloadedFor = useRef<string | null>(null);
+    const { version, connected } = current;
+    useEffect(() => {
+        if (
+            version === null ||
+            version === loadedVersion ||
+            version === reloadedFor.current ||
+            !visible ||
+            busy
+        ) {
+            return;
+        }
+        reloadedFor.current = version;
+        void latest.current.revalidate();
+    }, [version, loadedVersion, visible, busy]);
+
+    // Polling, only while the stream is down.
+    useEffect(() => {
+        if (connected || !visible) return;
         const timer = setInterval(() => {
             const { state, revalidate } = latest.current;
-            if (document.visibilityState === 'visible' && state === 'idle') {
-                void revalidate();
-            }
-        }, POLL_MS);
+            if (state === 'idle') void revalidate();
+        }, FALLBACK_POLL_MS);
         return () => clearInterval(timer);
-    }, []);
+    }, [connected, visible]);
+
+    return current.people;
 }
 
 /**
@@ -654,7 +821,7 @@ export default function SurfaceRoute({ loaderData }: Route.ComponentProps) {
     const location = useLocation();
     const view = surface.views.find((candidate) => candidate.id === viewId);
     const recent = useRecentItems(itemId, surface.items);
-    usePollForChanges();
+    const present = useSurfaceEvents(surface.id, loaderData.version);
     const [searching, setSearching] = useState(false);
     useSearchShortcut(setSearching);
 
@@ -716,6 +883,7 @@ export default function SurfaceRoute({ loaderData }: Route.ComponentProps) {
                             view={view}
                             visitKey={location.key}
                             onSearch={() => setSearching(true)}
+                            present={present}
                         />
                         <div className="pointer-events-none absolute inset-x-0 top-0">
                             <Outlet />

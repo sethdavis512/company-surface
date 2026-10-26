@@ -26,6 +26,7 @@ export default [
     ...prefix('/api', [
         route('/auth/*', 'routes/api-auth.ts'),
         route('/mcp', 'routes/api-mcp.ts'),
+        route('/surfaces/:surfaceId/events', 'routes/api-surface-events.ts'),
         route('/theme', 'routes/api-theme.ts'),
         route('/test-mailbox', 'routes/api-test-mailbox.ts'),
         route('/test-role', 'routes/api-test-role.ts'),

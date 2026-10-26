@@ -39,6 +39,7 @@ import { cx } from 'cva.config';
 import { createSurfaceSearch } from '~/lib/search';
 import { CanvasMenu } from './CanvasMenu';
 import { AddCardMenu } from './AddCardMenu';
+import { PresenceAvatars } from './PresenceAvatars';
 import { Button } from '~/components/ui/button';
 import {
     sizeOf,
@@ -52,6 +53,7 @@ import {
     placeWindows,
     restack,
     type Insets,
+    type Person,
     type PullRequestItem,
     type Surface,
     type SurfaceItem,
@@ -548,6 +550,8 @@ type Props = {
     visitKey: string;
     /** Opens the ⌘K palette (from the canvas's right-click menu). */
     onSearch: () => void;
+    /** Everyone viewing the surface right now, you included. */
+    present: Person[];
 };
 
 export function SurfaceCanvas({
@@ -556,6 +560,7 @@ export function SurfaceCanvas({
     view,
     visitKey,
     onSearch,
+    present,
 }: Props) {
     const shapeDrop = useShapeDrop();
     const submitResize = useSubmit();
@@ -949,9 +954,10 @@ export function SurfaceCanvas({
                                                         <Panel
                                                             position="top-left"
                                                             // The whole top row: Add pinned
-                                                            // left, the filters centered in the
-                                                            // rest, never overlapping. Clicks
-                                                            // pass through the gaps to the canvas.
+                                                            // left, who's here pinned right, the
+                                                            // filters centered between, never
+                                                            // overlapping. Clicks pass through
+                                                            // the gaps to the canvas.
                                                             style={{ right: 0 }}
                                                             className="pointer-events-none flex items-start gap-2"
                                                         >
@@ -983,6 +989,23 @@ export function SurfaceCanvas({
                                                                     }
                                                                 />
                                                             </div>
+                                                            <PresenceAvatars
+                                                                people={present}
+                                                                meId={
+                                                                    surface.meId
+                                                                }
+                                                                className="shrink-0"
+                                                            />
+                                                        </Panel>
+                                                    )}
+                                                    {isFocused && (
+                                                        <Panel position="top-right">
+                                                            <PresenceAvatars
+                                                                people={present}
+                                                                meId={
+                                                                    surface.meId
+                                                                }
+                                                            />
                                                         </Panel>
                                                     )}
                                                     {isFocused && (

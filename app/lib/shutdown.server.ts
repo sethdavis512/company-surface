@@ -6,6 +6,7 @@ import { log } from '~/lib/logger.server';
 type Cleanup = () => unknown;
 
 const cleanups = new Set<Cleanup>();
+const drainStarts = new Set<Cleanup>();
 
 // Node's built-in HTTP diagnostics channels. react-router-serve creates the
 // http.Server, so the app learns about it from these instead of a reference.
@@ -20,6 +21,28 @@ const RESPONSE_FINISH = 'http.server.response.finish';
  */
 export function onShutdown(cleanup: Cleanup) {
     cleanups.add(cleanup);
+}
+
+/**
+ * Registers something to end as soon as shutdown starts, before the drain:
+ * responses that never finish on their own (event streams) would otherwise
+ * hold the server open until SIGKILL. Registering the same function twice
+ * registers it once.
+ */
+export function onDrainStart(end: Cleanup) {
+    drainStarts.add(end);
+}
+
+/** Ends what onDrainStart() registered, logging failures. */
+export function runDrainStarts() {
+    for (const end of drainStarts) {
+        try {
+            end();
+        } catch (error) {
+            log.exception('shutdown_drain_start_failed', error);
+        }
+    }
+    drainStarts.clear();
 }
 
 /** Runs each registered cleanup once, logging failures instead of throwing. */
@@ -84,6 +107,7 @@ export function installGracefulShutdown() {
 
     const shutdown = async (signal: NodeJS.Signals) => {
         log.info('shutdown_started', { signal });
+        runDrainStarts();
         await waitForDrain(server);
         await runShutdownCleanups();
         log.info('shutdown_complete', { signal });
