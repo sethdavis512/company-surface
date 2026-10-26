@@ -9,7 +9,6 @@ import {
     SquarePlayIcon,
     StickyNoteIcon,
     PaletteIcon,
-    ShapesIcon,
     type LucideIcon,
 } from 'lucide-react';
 import type { SurfaceItemKind } from '~/lib/surface';
@@ -26,7 +25,6 @@ export const KIND_ICONS: Record<SurfaceItemKind, LucideIcon> = {
     image: ImageIcon,
     note: StickyNoteIcon,
     sketch: PaletteIcon,
-    shape: ShapesIcon,
 };
 
 export const KIND_NAMES: Record<SurfaceItemKind, string> = {
@@ -40,5 +38,4 @@ export const KIND_NAMES: Record<SurfaceItemKind, string> = {
     image: 'Image',
     note: 'Sticky note',
     sketch: 'Sketch',
-    shape: 'Shape',
 };

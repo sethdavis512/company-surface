@@ -393,118 +393,35 @@ test.describe('Canvas controls', () => {
             .toBe(0);
     });
 
-    test('shapes: add from the tray by click or drag, change the outline, resize', async ({
+    test('agents link and delete cards over MCP', async ({
         authedPage: page,
     }) => {
         const surface = await freshSurface(page);
-        await page.goto(`/surfaces/${surface.id}`);
-        await waitForHydration(page);
-        const tray = page.getByRole('toolbar', { name: 'Shapes' });
-
-        await tray.getByRole('button', { name: 'Add a diamond' }).click();
-        const diamond = page.getByRole('article', {
-            name: 'Shape (diamond): Diamond',
-        });
-        await expect(diamond).toBeVisible();
-
-        // Drag a circle onto the canvas: it lands where it's dropped.
-        const canvas = (await page
-            .getByRole('application', { name: 'Company surface' })
-            .boundingBox())!;
-        const drop = { x: canvas.x + 200, y: canvas.y + canvas.height - 150 };
-        await tray
-            .getByRole('button', { name: 'Add a circle' })
-            .dragTo(
-                page.getByRole('application', { name: 'Company surface' }),
-                {
-                    targetPosition: {
-                        x: drop.x - canvas.x,
-                        y: drop.y - canvas.y,
-                    },
-                },
-            );
-        const circle = page.getByRole('article', {
-            name: 'Shape (circle): Circle',
-        });
-        await expect(circle).toBeVisible();
-        // Measured once its fade-in (which scales it) has finished.
-        await expect
-            .poll(async () => {
-                const placed = (await circle.boundingBox())!;
-                return Math.abs(placed.x + placed.width / 2 - drop.x);
-            })
-            .toBeLessThan(3);
-
-        // Change the diamond into a hexagon from its tray.
-        await diamond.hover();
-        await page.getByRole('button', { name: 'Shape of Diamond' }).click();
-        await page.getByRole('menuitemradio', { name: 'hexagon' }).click();
-        await expect(
-            page.getByRole('article', { name: 'Shape (hexagon): Diamond' }),
-        ).toBeVisible();
-
-        // Resize it from the corner grip, and it stays that size.
-        const hexagon = page.getByRole('article', {
-            name: 'Shape (hexagon): Diamond',
-        });
-        const before = (await hexagon.boundingBox())!;
-        await hexagon.hover();
-        const grip = page.getByRole('separator', { name: 'Resize Diamond' });
-        const at = await center(grip);
-        await page.mouse.move(at.x, at.y);
-        await page.mouse.down();
-        await page.mouse.move(at.x + 120, at.y + 60, { steps: 8 });
-        await page.mouse.up();
-        await expect
-            .poll(async () => (await hexagon.boundingBox())!.width)
-            .toBeGreaterThan(before.width + 60);
-        const cards = await mcp(page, 'list_cards', { surfaceId: surface.id });
-        const id = cards.find(
-            (c: { title: string }) => c.title === 'Diamond',
-        ).id;
-        await expect
-            .poll(
-                async () => (await mcp(page, 'get_card', { itemId: id })).width,
-            )
-            .toBeGreaterThan(180 + 60 / 2);
-    });
-
-    test('agents draw shapes and delete cards over MCP', async ({
-        authedPage: page,
-    }) => {
-        const surface = await freshSurface(page);
-        const start = await mcp(page, 'add_shape', {
+        const start = await mcp(page, 'add_note', {
             surfaceId: surface.id,
-            shape: 'circle',
-            title: 'Start',
+            text: 'Start',
             color: 'emerald',
         });
-        const end = await mcp(page, 'add_shape', {
+        const end = await mcp(page, 'add_note', {
             surfaceId: surface.id,
-            shape: 'rectangle',
-            title: 'End',
+            text: 'End',
         });
         await mcp(page, 'link_cards', {
             from: start.id,
             to: end.id,
             label: 'then',
         });
-        await mcp(page, 'update_shape', {
-            itemId: end.id,
-            shape: 'triangle',
-            width: 240,
-        });
         await page.goto(`/surfaces/${surface.id}`);
         await waitForHydration(page);
         await expect(
-            page.getByRole('article', { name: 'Shape (triangle): End' }),
+            page.getByRole('article', { name: 'Sticky note: End' }),
         ).toBeVisible();
         await expect(page.locator('g[data-edge-id]')).toHaveCount(1);
 
         const result = await mcp(page, 'delete_card', { itemId: start.id });
         expect(result.deleted).toEqual([start.id]);
         await expect(
-            page.getByRole('article', { name: 'Shape (circle): Start' }),
+            page.getByRole('article', { name: 'Sticky note: Start' }),
         ).toHaveCount(0);
         await expect(page.locator('g[data-edge-id]')).toHaveCount(0);
     });
