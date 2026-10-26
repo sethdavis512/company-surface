@@ -204,7 +204,7 @@ function PeopleChatThread({
                                 mine && 'flex-row-reverse',
                             )}
                         >
-                            {!mine && <Avatar person={author} size="sm" />}
+                            <Avatar person={author} size="sm" />
                             <div
                                 className={cx(
                                     'flex max-w-[min(78%,36rem)] flex-col gap-0.5',

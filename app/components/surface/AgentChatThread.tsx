@@ -353,22 +353,36 @@ function MyMessage({
 }) {
     const { meId, personById } = useSurfacePeople();
     const mine = authorId === meId;
+    const author = personById(authorId);
+    // Everyone gets their avatar, so a shared agent chat says who asked what.
     return (
         <li
             data-message-id={id}
             className={cx('flex items-end gap-2', mine && 'flex-row-reverse')}
         >
-            {!mine && <Avatar person={personById(authorId)} size="sm" />}
-            <p
+            <Avatar person={author} size="sm" />
+            <div
                 className={cx(
-                    'max-w-[min(78%,36rem)] rounded-2xl px-3.5 py-2 text-sm leading-snug wrap-anywhere whitespace-pre-wrap',
-                    mine
-                        ? 'bg-primary text-primary-foreground rounded-br-md'
-                        : 'bg-muted text-foreground rounded-bl-md',
+                    'flex max-w-[min(78%,36rem)] flex-col gap-0.5',
+                    mine && 'items-end',
                 )}
             >
-                {text}
-            </p>
+                {!mine && (
+                    <span className="text-muted-foreground px-1 text-[11px]">
+                        {author?.name}
+                    </span>
+                )}
+                <p
+                    className={cx(
+                        'rounded-2xl px-3.5 py-2 text-sm leading-snug wrap-anywhere whitespace-pre-wrap',
+                        mine
+                            ? 'bg-primary text-primary-foreground rounded-br-md'
+                            : 'bg-muted text-foreground rounded-bl-md',
+                    )}
+                >
+                    {text}
+                </p>
+            </div>
         </li>
     );
 }
