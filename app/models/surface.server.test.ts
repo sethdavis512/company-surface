@@ -51,9 +51,6 @@ import {
     commentOnIssue,
     renameItem,
     deleteItem,
-    createShape,
-    setShape,
-    resizeShape,
 } from './surface.server';
 
 const ALICE = 'user-alice';
@@ -84,7 +81,6 @@ describe('surface store', () => {
                 'image',
                 'note',
                 'sketch',
-                'shape',
             ]),
         );
         expect(getItem('doc-sso-notes').createdById).toBe(AGENT_ID);
@@ -728,22 +724,47 @@ describe('surface store', () => {
         expect(surface.arrangement.positions[doc.id]).toBeUndefined();
     });
 
-    it('draws shapes, changes their outline, and keeps sizes in bounds', () => {
-        const shape = createShape({
-            surfaceId: SEED_SURFACE_ID,
-            shape: 'diamond',
-        });
-        expect(shape).toMatchObject({
+    it('drops shape cards a store from before their removal still holds', () => {
+        // A dev store outlives code reloads, so one can still hold them.
+        const raw = (
+            globalThis as unknown as Record<
+                symbol,
+                {
+                    items: Record<string, unknown>[];
+                    relations: Record<string, unknown>[];
+                    surfaces: {
+                        id: string;
+                        arrangement: { stack: string[] };
+                    }[];
+                }
+            >
+        )[Symbol.for('company-surface.mock-store')]!;
+        raw.items.push({
             kind: 'shape',
-            title: 'Diamond',
-            width: 180,
-            height: 120,
+            id: 'shape-old',
+            surfaceId: SEED_SURFACE_ID,
+            title: 'Old',
         });
-        expect(setShape(shape.id, 'hexagon').shape).toBe('hexagon');
-        expect(resizeShape(shape.id, { width: 5, height: 9000 })).toMatchObject(
-            { width: 60, height: 1200 },
+        raw.relations.push({
+            id: 'r-old',
+            from: 'doc-brief',
+            to: 'shape-old',
+            label: 'x',
+        });
+        raw.surfaces
+            .find((surface) => surface.id === SEED_SURFACE_ID)!
+            .arrangement.stack.push('shape-old');
+
+        expect(listItems(SEED_SURFACE_ID).map((item) => item.id)).not.toContain(
+            'shape-old',
         );
-        expect(() => setShape('doc-brief', 'circle')).toThrow(/not a shape/);
+        expect(raw.relations.some((relation) => relation.id === 'r-old')).toBe(
+            false,
+        );
+        expect(
+            raw.surfaces.find((surface) => surface.id === SEED_SURFACE_ID)!
+                .arrangement.stack,
+        ).not.toContain('shape-old');
     });
 
     it('renames cards, trimmed, without touching a document version', () => {

@@ -12,9 +12,6 @@ import {
     ISSUE_STATUSES,
     SKETCH_COLORS,
     SKETCH_SIZE,
-    SHAPE_MAX,
-    SHAPE_MIN,
-    SHAPE_TYPES,
     TITLE_MAX,
     WINDOW_COLOR_NAMES,
     frameItems,
@@ -24,6 +21,7 @@ import {
     type SurfaceItem,
 } from '~/lib/surface';
 import { sketchStrokesSchema } from '~/lib/sketch';
+import { ARRANGE_DIRECTIONS } from '~/lib/arrange';
 import {
     AGENT_ID,
     SurfaceError,
@@ -37,9 +35,6 @@ import {
     createImage,
     createNote,
     createSketch,
-    createShape,
-    setShape,
-    resizeShape,
     updateNote,
     setItemLocked,
     unlinkCards,
@@ -52,6 +47,9 @@ import {
     createIssue,
     updateIssue,
     appendToDocument,
+    arrangeCards,
+    getLayout,
+    moveCard,
     createChat,
     createDocument,
     getItem,
@@ -548,6 +546,67 @@ export function createSurfaceMcpServer(): McpServer {
     );
 
     server.registerTool(
+        'get_layout',
+        {
+            title: 'Read the layout',
+            description:
+                "Where every card sits on the surface: x, y (top-left, in canvas pixels), width, height, what it hangs under, and whether it's locked. Read it before arranging or moving cards.",
+            inputSchema: { surfaceId: surfaceIdSchema },
+            annotations: { readOnlyHint: true },
+        },
+        ({ surfaceId }) => run(() => getLayout(surfaceId)),
+    );
+
+    server.registerTool(
+        'arrange_cards',
+        {
+            title: 'Arrange cards',
+            description:
+                'Lays cards out in groups so the surface reads at a glance: each group a column of cards (groups side by side, left to right) or a row (groups top to bottom). Group what belongs together (a chat with what it produced, a plan with its board, references with each other) and order groups the way the work flows. To title a group, add a sticky note and put it first. Cards hanging under another (charts, pull requests, pages, videos, images) travel with it; locked cards stay put. Cards no group names go in a last group unless rest is "leave". Everyone\'s canvas slides to the new layout.',
+            inputSchema: {
+                surfaceId: surfaceIdSchema,
+                groups: z
+                    .array(z.array(z.string()).min(1))
+                    .min(1)
+                    .max(20)
+                    .describe('Card ids, one list per group, in order.'),
+                direction: z.enum(ARRANGE_DIRECTIONS),
+                origin: z
+                    .object({ x: z.number(), y: z.number() })
+                    .optional()
+                    .describe(
+                        'Top-left of the layout; defaults to where the cards it moves start.',
+                    ),
+                gap: z
+                    .number()
+                    .min(0)
+                    .max(400)
+                    .optional()
+                    .describe(
+                        'Pixels between cards in a group (48 by default).',
+                    ),
+                rest: z.enum(['append', 'leave']).optional(),
+            },
+        },
+        (input) => run(() => arrangeCards(input)),
+    );
+
+    server.registerTool(
+        'move_card',
+        {
+            title: 'Move a card',
+            description:
+                'Moves one card so its top-left corner is at x, y (canvas pixels; see get_layout for sizes), taking what hangs under it along.',
+            inputSchema: {
+                itemId: z.string(),
+                x: z.number().finite(),
+                y: z.number().finite(),
+            },
+        },
+        (input) => run(() => moveCard(input)),
+    );
+
+    server.registerTool(
         'open_pull_request',
         {
             title: 'Open a pull request from a chat',
@@ -683,60 +742,6 @@ export function createSurfaceMcpServer(): McpServer {
                     title: copy.title,
                     link: link(copy.id),
                 };
-            }),
-    );
-
-    server.registerTool(
-        'add_shape',
-        {
-            title: 'Add a shape',
-            description: `Adds a flowchart shape to a surface, labeled with its title, for diagrams: ${SHAPE_TYPES.join(', ')}. Link shapes with link_cards to draw the flow, color them with set_card_color, rename with rename_card. Size is in px (${SHAPE_MIN} to ${SHAPE_MAX}; 180x120 by default).`,
-            inputSchema: {
-                surfaceId: surfaceIdSchema,
-                shape: z.enum(SHAPE_TYPES),
-                title: z.string().max(TITLE_MAX).optional(),
-                color: z.enum(WINDOW_COLOR_NAMES).optional(),
-                width: z.number().min(SHAPE_MIN).max(SHAPE_MAX).optional(),
-                height: z.number().min(SHAPE_MIN).max(SHAPE_MAX).optional(),
-                authorId: authorSchema,
-            },
-        },
-        ({ color, ...input }) =>
-            run(() => {
-                const shape = createShape(input);
-                if (color) setItemColor(shape.id, color);
-                return { ...shape, url: link(shape.id) };
-            }),
-    );
-
-    server.registerTool(
-        'update_shape',
-        {
-            title: 'Change a shape',
-            description: "Changes a shape's outline and/or its size in px.",
-            inputSchema: {
-                itemId: z.string(),
-                shape: z.enum(SHAPE_TYPES).optional(),
-                width: z.number().min(SHAPE_MIN).max(SHAPE_MAX).optional(),
-                height: z.number().min(SHAPE_MIN).max(SHAPE_MAX).optional(),
-            },
-        },
-        ({ itemId, shape, width, height }) =>
-            run(() => {
-                let item = shape ? setShape(itemId, shape) : undefined;
-                if (width !== undefined || height !== undefined) {
-                    // resizeShape refuses anything but a shape.
-                    const current = item ?? getItem(itemId);
-                    const now =
-                        current.kind === 'shape'
-                            ? current
-                            : { width: SHAPE_MIN, height: SHAPE_MIN };
-                    item = resizeShape(itemId, {
-                        width: width ?? now.width,
-                        height: height ?? now.height,
-                    });
-                }
-                return item ?? { itemId, unchanged: true };
             }),
     );
 

@@ -4,7 +4,9 @@ import { BotIcon } from 'lucide-react';
 import { AGENT_ID, type Person } from '~/lib/surface';
 
 export const avatarVariants = cva({
-    base: 'bg-muted text-foreground inline-flex shrink-0 items-center justify-center rounded-full font-semibold ring-2 ring-card select-none',
+    // The muted wash is translucent, so it's painted over an opaque card fill
+    // or stacked avatars show through each other.
+    base: 'bg-card from-muted to-muted bg-linear-to-b text-foreground inline-flex shrink-0 items-center justify-center rounded-full font-semibold ring-2 ring-card select-none',
     variants: {
         size: {
             sm: 'size-6 text-[10px]',
@@ -28,7 +30,7 @@ export function Avatar({ person, size, className }: Props) {
             aria-hidden="true"
             className={cx(
                 avatarVariants({ size }),
-                agent && 'bg-agent text-background',
+                agent && 'bg-agent text-background bg-none',
                 className,
             )}
         >

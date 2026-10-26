@@ -18,7 +18,6 @@ const NEW_CARDS: { kind: SurfaceItemKind; label: string }[] = [
     { kind: 'board', label: 'Board' },
     { kind: 'note', label: 'Sticky note' },
     { kind: 'sketch', label: 'Sketch' },
-    { kind: 'shape', label: 'Shape' },
 ];
 
 const BY_ADDRESS: { kind: SurfaceItemKind; label: string }[] = [

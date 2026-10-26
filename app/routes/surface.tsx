@@ -31,6 +31,7 @@ import { SurfaceSwitcher } from '~/components/surface/SurfaceSwitcher';
 import { Button } from '~/components/ui/button';
 import { APP_NAME } from '~/config';
 import { requireUserFromContext } from '~/context';
+import { env } from '~/lib/env.server';
 import { authMiddleware } from '~/middleware/auth';
 import {
     completeNavOrder,
@@ -65,8 +66,6 @@ import {
     duplicateItem,
     renameItem,
     deleteItem,
-    setShape,
-    resizeShape,
     navigateWebPage,
     resetWindowPositions,
     postMessage,
@@ -81,7 +80,6 @@ import {
 import {
     ISSUE_PRIORITIES,
     ISSUE_STATUSES,
-    SHAPE_TYPES,
     TITLE_MAX,
     WINDOW_COLOR_NAMES,
     itemPath,
@@ -133,6 +131,8 @@ export async function loader({ request, context, params }: Route.LoaderArgs) {
         navOrder: await getNavOrder(request),
         navCollapsed: await getNavCollapsed(request),
         navPanel: readNavPanel(request.headers.get('Cookie')),
+        /** Agent chats answer for real (Claude) instead of from the mock. */
+        liveAgent: Boolean(env.ANTHROPIC_API_KEY),
     };
 }
 
@@ -221,14 +221,12 @@ const intentSchema = z.discriminatedUnion('intent', [
             'pull-request',
             'note',
             'sketch',
-            'shape',
         ]),
         title: z.string().trim().max(160).optional(),
         url: z.string().trim().max(2000).optional(),
         attachedTo: z.string().min(1).optional(),
         x: z.coerce.number().finite().optional(),
         y: z.coerce.number().finite().optional(),
-        shape: z.enum(SHAPE_TYPES).optional(),
     }),
     z.object({
         intent: z.literal('link-cards'),
@@ -269,17 +267,6 @@ const intentSchema = z.discriminatedUnion('intent', [
                 }
             })
             .pipe(sketchStrokesSchema),
-    }),
-    z.object({
-        intent: z.literal('set-shape'),
-        itemId: z.string().min(1),
-        shape: z.enum(SHAPE_TYPES),
-    }),
-    z.object({
-        intent: z.literal('resize-card'),
-        itemId: z.string().min(1),
-        width: z.coerce.number().finite(),
-        height: z.coerce.number().finite(),
     }),
     z.object({
         intent: z.literal('delete-card'),
@@ -397,7 +384,6 @@ async function applyIntent({ request, context, params }: Route.ActionArgs) {
                 title: input.title,
                 url: input.url,
                 attachedTo: input.attachedTo,
-                shape: input.shape,
                 position:
                     input.x === undefined || input.y === undefined
                         ? undefined
@@ -536,10 +522,6 @@ async function applyIntent({ request, context, params }: Route.ActionArgs) {
             updateNote({ noteId: input.noteId, text: input.text });
         } else if (input.intent === 'update-sketch') {
             updateSketch({ sketchId: input.sketchId, strokes: input.strokes });
-        } else if (input.intent === 'set-shape') {
-            setShape(input.itemId, input.shape);
-        } else if (input.intent === 'resize-card') {
-            resizeShape(input.itemId, input);
         } else if (input.intent === 'delete-card') {
             deleteItem(input.itemId);
         } else if (input.intent === 'rename-card') {

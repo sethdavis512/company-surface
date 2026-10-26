@@ -209,7 +209,5 @@ function summary(item: SurfaceItem): string {
             return item.text.replace(/\s+/g, ' ').trim() || 'Empty note';
         case 'sketch':
             return `${item.strokes.length} strokes`;
-        case 'shape':
-            return `${item.shape[0].toUpperCase()}${item.shape.slice(1)}`;
     }
 }

@@ -5,6 +5,7 @@
  * `~/models/surface.server`.
  */
 
+import type { UIMessage } from 'ai';
 import type { DocumentBlock } from './portable-text';
 
 /** Who agents act as. Anything with this `createdById` was made by an agent. */
@@ -22,6 +23,11 @@ export type ChatMessage = {
     authorId: string;
     text: string;
     sentAt: string;
+    /**
+     * A live agent's reply as it streamed: its text and the tools it called,
+     * in order (AI SDK UI message parts). `text` still holds the words alone.
+     */
+    parts?: UIMessage['parts'];
 };
 
 export type ChatItem = {
@@ -32,7 +38,7 @@ export type ChatItem = {
     title: string;
     participantIds: string[];
     messages: ChatMessage[];
-    /** Someone is "typing": a reply from the mock service is on its way. */
+    /** Someone is "typing": a reply (the agent's, or the mock's) is on its way. */
     awaitingReply?: boolean;
     createdById: string;
 };
@@ -299,43 +305,6 @@ export type SketchStroke = {
     pressures?: number[];
 };
 
-/** The outlines a shape card can take (flowchart shapes). */
-export const SHAPE_TYPES = [
-    'rectangle',
-    'rounded',
-    'circle',
-    'diamond',
-    'hexagon',
-    'triangle',
-    'parallelogram',
-    'cylinder',
-    'arrow',
-    'plus',
-] as const;
-
-export type ShapeType = (typeof SHAPE_TYPES)[number];
-
-/** A shape card's size limits, in px. */
-export const SHAPE_MIN = 60;
-export const SHAPE_MAX = 1200;
-
-/**
- * A flowchart shape with a label (its title) in the middle, for diagrams
- * drawn on the canvas. Unlike other cards it keeps its own size, since
- * people resize it.
- */
-export type ShapeItem = {
-    kind: 'shape';
-    id: string;
-    surfaceId: string;
-    title: string;
-    shape: ShapeType;
-    width: number;
-    height: number;
-    createdById: string;
-    updatedAt: string;
-};
-
 /** A quick drawing, MS Paint style: strokes on white paper. */
 export type SketchItem = {
     kind: 'sketch';
@@ -361,8 +330,7 @@ export type SurfaceItem =
     | WebItem
     | ImageItem
     | NoteItem
-    | SketchItem
-    | ShapeItem;
+    | SketchItem;
 
 const YOUTUBE_ID = /^[\w-]{11}$/;
 
@@ -422,6 +390,24 @@ export function normalizeWebUrl(input: string): string | null {
 export function isAgentMade(item: { createdById: string }): boolean {
     return item.createdById === AGENT_ID;
 }
+
+/**
+ * A chat between signed-in people (`isMember`) and the agent alone, with
+ * none of the mock cast: when chat is live (an
+ * Anthropic key is set), the agent answers it for real and can make cards.
+ */
+export function isAgentChat(
+    chat: Pick<ChatItem, 'participantIds'>,
+    isMember: (id: string) => boolean,
+): boolean {
+    return (
+        chat.participantIds.includes(AGENT_ID) &&
+        chat.participantIds.every((id) => id === AGENT_ID || isMember(id))
+    );
+}
+
+/** The role of people who sign in (the rest of the cast is mock). */
+export const MEMBER_ROLE = 'Member';
 
 /**
  * The item a window hangs under on the canvas: a pull request's chat, a
@@ -490,6 +476,11 @@ export type Arrangement = {
     positions: Partial<Record<string, { x: number; y: number }>>;
     /** Cards pinned where they are: they can't be dragged, and Arrange leaves them. */
     locked: string[];
+    /**
+     * Goes up each time an agent lays cards out (`arrangeCards`,
+     * `moveCard`), so open canvases slide every card to its saved spot.
+     */
+    layoutVersion?: number;
 };
 
 /**
@@ -571,8 +562,6 @@ export const WINDOW_SIZES = {
     note: { width: 240, height: 240 },
     // The 640x400 paper plus the toolbar above and palette below.
     sketch: { width: 640, height: 540 },
-    // A new shape's size (shapes keep their own: `sizeOf`).
-    shape: { width: 180, height: 120 },
 } as const satisfies Record<SurfaceItemKind, { width: number; height: number }>;
 
 export const WINDOW_GAP = 48;
@@ -586,11 +575,9 @@ export type WindowPlacement = {
     height: number;
 };
 
-/** A card's resting size: its kind's, or its own for a (resizable) shape. */
+/** A card's resting size: its kind's. */
 export function sizeOf(item: SurfaceItem): { width: number; height: number } {
-    return item.kind === 'shape'
-        ? { width: item.width, height: item.height }
-        : WINDOW_SIZES[item.kind];
+    return WINDOW_SIZES[item.kind];
 }
 
 /**

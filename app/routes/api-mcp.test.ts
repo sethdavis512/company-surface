@@ -238,6 +238,7 @@ describe('/api/mcp', () => {
             'product',
             'customers',
             'design',
+            'playground',
         ]);
         expect(spaces[0].surfaces[0]).toMatchObject({
             id: 'atlas-launch',
