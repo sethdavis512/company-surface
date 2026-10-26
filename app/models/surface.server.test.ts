@@ -43,6 +43,7 @@ import {
     updateDocument,
     SurfaceConflictError,
     resetWindowPositions,
+    arrangeByLinks,
     createSketch,
     updateSketch,
     setItemLocked,
@@ -569,6 +570,26 @@ describe('surface store', () => {
                 )
             ).arrangement.positions,
         ).toEqual({});
+    });
+
+    it('arranges by links: saves a spot for every card, and keeps locked ones', async () => {
+        setItemLocked('chat-launch', true, { x: 5000, y: 5000 });
+        const before = (await getSurfaceForUser(user, SEED_SURFACE_ID))!;
+        const moved = arrangeByLinks(SEED_SURFACE_ID);
+        const after = (await getSurfaceForUser(user, SEED_SURFACE_ID))!;
+        expect(after.arrangement.layoutVersion).toBe(
+            (before.arrangement.layoutVersion ?? 0) + 1,
+        );
+        expect(after.arrangement.positions['chat-launch']).toEqual({
+            x: 5000,
+            y: 5000,
+        });
+        expect(moved['chat-launch']).toBeUndefined();
+        // Every other card that doesn't hang under the locked chat moves.
+        expect(Object.keys(moved).length).toBeGreaterThan(5);
+        for (const [id, spot] of Object.entries(moved)) {
+            expect(after.arrangement.positions[id]).toEqual(spot);
+        }
     });
 
     it('will not arrange items that do not exist', () => {

@@ -3,6 +3,7 @@ import type { SessionUser } from '~/context';
 import { MOCK_REPLY_DELAY_MS, pickMockReply } from '~/lib/mock-chat';
 import {
     arrangeGroups,
+    clusterLayout,
     currentLayout,
     topLeftOf,
     type ArrangeDirection,
@@ -2393,6 +2394,28 @@ export function moveCard({
     }
     arrangement.layoutVersion = (arrangement.layoutVersion ?? 0) + 1;
     return { id: item.id, kind: item.kind, title: item.title, x, y };
+}
+
+/**
+ * Arrange: lays the surface out by links (`clusterLayout`: each cluster of
+ * linked cards a block around its hub, blocks packed in rows) and saves
+ * every new spot, so the layout is shared and survives reloads. Open
+ * canvases slide to it (`layoutVersion`). Locked cards stay put.
+ */
+export function arrangeByLinks(surfaceId: string) {
+    const { arrangement } = requireSurface(surfaceId);
+    const items = store().items.filter((item) => item.surfaceId === surfaceId);
+    const ids = new Set(items.map((item) => item.id));
+    const positions = clusterLayout(
+        items,
+        store().relations.filter(
+            (relation) => ids.has(relation.from) && ids.has(relation.to),
+        ),
+        { locked: new Set(arrangement.locked) },
+    );
+    arrangement.positions = { ...arrangement.positions, ...positions };
+    arrangement.layoutVersion = (arrangement.layoutVersion ?? 0) + 1;
+    return positions;
 }
 
 /** Forgets moved windows, except locked ones, which stay put. */

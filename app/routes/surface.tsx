@@ -68,6 +68,7 @@ import {
     deleteItem,
     navigateWebPage,
     resetWindowPositions,
+    arrangeByLinks,
     postMessage,
     deleteView,
     restackItem,
@@ -311,6 +312,7 @@ const intentSchema = z.discriminatedUnion('intent', [
             ),
     }),
     z.object({ intent: z.literal('reset-positions') }),
+    z.object({ intent: z.literal('arrange') }),
     z.object({
         intent: z.literal('set-nav-order'),
         order: z
@@ -541,6 +543,8 @@ async function applyIntent({ request, context, params }: Route.ActionArgs) {
             moveWindows(input.positions);
         } else if (input.intent === 'reset-positions') {
             resetWindowPositions(params.surfaceId);
+        } else if (input.intent === 'arrange') {
+            arrangeByLinks(params.surfaceId);
         } else if (input.intent === 'restack') {
             restackItem(input.itemId, input.to);
         } else {

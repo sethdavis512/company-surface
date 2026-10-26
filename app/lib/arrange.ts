@@ -4,7 +4,9 @@ import {
     parentIdOf,
     placeWindows,
     sizeOf,
+    type Relation,
     type SurfaceItem,
+    type SurfaceItemKind,
     type WindowPlacement,
 } from './surface';
 
@@ -170,6 +172,194 @@ export function arrangeGroups(
         }
     }
     return { positions, skipped, groups: boxes };
+}
+
+/** Roughly a screen's shape: what packed rows aim for. */
+const PACK_ASPECT = 16 / 9;
+
+/** Which card a cluster centers on when link counts tie. */
+const HUB_RANK: Partial<Record<SurfaceItemKind, number>> = {
+    chat: 0,
+    document: 1,
+    board: 2,
+};
+
+type Box = { width: number; height: number };
+
+/**
+ * Shelf packing: boxes left to right in rows, a new row when the next one
+ * would pass the target width (about `PACK_ASPECT` of their total area, and
+ * never narrower than the widest box). Returns each box's corner and the
+ * whole thing's size.
+ */
+function packRows(boxes: readonly Box[], gap: number) {
+    const area = boxes.reduce((sum, box) => sum + box.width * box.height, 0);
+    const target = Math.max(
+        ...boxes.map((box) => box.width),
+        Math.sqrt(area * PACK_ASPECT),
+    );
+    const corners: Spot[] = [];
+    let x = 0;
+    let y = 0;
+    let rowHeight = 0;
+    let width = 0;
+    for (const box of boxes) {
+        if (x > 0 && x + box.width > target) {
+            y += rowHeight + gap;
+            x = 0;
+            rowHeight = 0;
+        }
+        corners.push({ x, y });
+        width = Math.max(width, x + box.width);
+        rowHeight = Math.max(rowHeight, box.height);
+        x += box.width + gap;
+    }
+    return { corners, width, height: boxes.length > 0 ? y + rowHeight : 0 };
+}
+
+/** A laid-out cluster: card spots from its corner, and its size. */
+type Cluster = Box & { members: { id: string; dx: number; dy: number }[] };
+
+function clusterOf(blocks: Block[], hubId: string | null, gap: number) {
+    const hub = blocks.find((block) => block.id === hubId);
+    const rest = blocks.filter((block) => block !== hub);
+    const packed = packRows(rest, gap);
+    const left = hub ? hub.width + gap : 0;
+    const members = [
+        ...(hub?.members ?? []),
+        ...rest.flatMap((block, index) =>
+            block.members.map((member) => ({
+                id: member.id,
+                dx: left + packed.corners[index]!.x + member.dx,
+                dy: packed.corners[index]!.y + member.dy,
+            })),
+        ),
+    ];
+    return {
+        members,
+        width: rest.length > 0 ? left + packed.width : (hub?.width ?? 0),
+        height: Math.max(hub?.height ?? 0, packed.height),
+    } satisfies Cluster;
+}
+
+/**
+ * Arrange by links: cards joined by links (or hanging under one another)
+ * form a cluster, laid out around its hub (the card with the most links,
+ * a chat or document when that ties) with the hub on the left, what hangs
+ * under it below, and the rest packed in rows beside it, tallest first.
+ * Clusters pack into rows, biggest first; cards linked to nothing share a
+ * last cluster, chats first. Locked cards stay put and link nothing
+ * together. Returns a spot for every card that moves.
+ */
+export function clusterLayout(
+    items: SurfaceItem[],
+    relations: readonly Relation[],
+    {
+        locked = new Set<string>(),
+        gap = WINDOW_GAP,
+    }: { locked?: ReadonlySet<string>; gap?: number } = {},
+): Record<string, Spot> {
+    const byId = new Map(items.map((item) => [item.id, item]));
+    const topOf = (id: string) => {
+        const parentId = parentIdOf(byId.get(id)!);
+        return parentId !== undefined && byId.has(parentId) ? parentId : id;
+    };
+    const tops = items.filter(
+        (item) => topOf(item.id) === item.id && !locked.has(item.id),
+    );
+    const order = new Map(tops.map((item, index) => [item.id, index]));
+
+    // Links between top cards (a link to a hanging card counts for its
+    // parent), each pair once.
+    const neighbors = new Map(tops.map((item) => [item.id, new Set<string>()]));
+    for (const { from, to } of relations) {
+        if (!byId.has(from) || !byId.has(to)) continue;
+        const a = topOf(from);
+        const b = topOf(to);
+        if (a === b || !neighbors.has(a) || !neighbors.has(b)) continue;
+        neighbors.get(a)!.add(b);
+        neighbors.get(b)!.add(a);
+    }
+
+    // Connected clusters, each in the order a walk from its hub meets them.
+    const hubFirst = (a: SurfaceItem, b: SurfaceItem) =>
+        neighbors.get(b.id)!.size - neighbors.get(a.id)!.size ||
+        (HUB_RANK[a.kind] ?? 9) - (HUB_RANK[b.kind] ?? 9) ||
+        order.get(a.id)! - order.get(b.id)!;
+    const seen = new Set<string>();
+    const linked: { hubId: string; ids: string[] }[] = [];
+    const loose: SurfaceItem[] = [];
+    for (const start of tops) {
+        if (seen.has(start.id)) continue;
+        if (neighbors.get(start.id)!.size === 0) {
+            seen.add(start.id);
+            loose.push(start);
+            continue;
+        }
+        const component: SurfaceItem[] = [];
+        const queue = [start.id];
+        seen.add(start.id);
+        while (queue.length > 0) {
+            const id = queue.shift()!;
+            component.push(byId.get(id)!);
+            for (const next of neighbors.get(id)!) {
+                if (!seen.has(next)) {
+                    seen.add(next);
+                    queue.push(next);
+                }
+            }
+        }
+        const hub = [...component].sort(hubFirst)[0]!;
+        const walk: string[] = [hub.id];
+        const met = new Set(walk);
+        for (let i = 0; i < walk.length; i++) {
+            for (const next of [...neighbors.get(walk[i]!)!].sort(
+                (a, b) => order.get(a)! - order.get(b)!,
+            )) {
+                if (!met.has(next)) {
+                    met.add(next);
+                    walk.push(next);
+                }
+            }
+        }
+        linked.push({ hubId: hub.id, ids: walk });
+    }
+
+    const tallestFirst = (a: Block, b: Block) => b.height - a.height;
+    const clusters: Cluster[] = linked
+        .map(({ hubId, ids }) => {
+            const blocks = ids.map((id) => blockOf(byId.get(id)!, items));
+            const [hub, ...rest] = blocks;
+            return clusterOf([hub!, ...rest.sort(tallestFirst)], hubId, gap);
+        })
+        .sort((a, b) => b.width * b.height - a.width * a.height);
+    if (loose.length > 0) {
+        const kindFirst = [...loose].sort(
+            (a, b) =>
+                (HUB_RANK[a.kind] ?? 9) - (HUB_RANK[b.kind] ?? 9) ||
+                order.get(a.id)! - order.get(b.id)!,
+        );
+        clusters.push(
+            clusterOf(
+                kindFirst.map((item) => blockOf(item, items)),
+                null,
+                gap,
+            ),
+        );
+    }
+
+    const packed = packRows(clusters, GROUP_GAP);
+    const positions: Record<string, Spot> = {};
+    clusters.forEach((cluster, index) => {
+        const corner = packed.corners[index]!;
+        for (const member of cluster.members) {
+            positions[member.id] = {
+                x: corner.x + member.dx,
+                y: corner.y + member.dy,
+            };
+        }
+    });
+    return positions;
 }
 
 /** The top-left corner of a set of placed cards (0, 0 for none). */

@@ -36,6 +36,7 @@ import {
 } from '@sethdavis512/trellis';
 import { ArrowLeftIcon, LayoutGridIcon } from 'lucide-react';
 import { cx } from 'cva.config';
+import { clusterLayout } from '~/lib/arrange';
 import { createSurfaceSearch } from '~/lib/search';
 import { CanvasMenu } from './CanvasMenu';
 import { AddCardMenu } from './AddCardMenu';
@@ -464,10 +465,11 @@ function useFocusView(
 }
 
 /**
- * Arrange: slides every window back into the canvas's tidy layout (chats in
- * a row, then documents, each pull request under its chat; see
- * `placeWindows`) at its resting size, fits the view to all of it, and
- * clears saved positions (a fresh load uses the same layout).
+ * Arrange: slides every window into the layout by links (`clusterLayout`:
+ * linked cards grouped around their hub, groups packed in rows) at its
+ * resting size, fits the view to all of it, and saves the spots (the
+ * `arrange` intent), so everyone's canvas slides there too and a reload
+ * keeps it.
  */
 function useArrange(
     surface: Surface,
@@ -500,37 +502,43 @@ function useArrange(
     }
 
     const arrange = useCallback(() => {
-        const spots = new Map(
-            placeWindows(surface.items).map((spot) => [spot.id, spot]),
-        );
+        // Locked cards (and what hangs under them) get no spot: they stay.
+        const spots = clusterLayout(surface.items, surface.relations, {
+            locked,
+        });
         setNodes((all) =>
             all.map((node) => {
-                // Locked cards stay where they were pinned.
-                const spot = locked.has(node.id)
-                    ? undefined
-                    : spots.get(node.id);
+                const spot = spots[node.id];
                 return spot
                     ? {
                           ...node,
                           position: { x: spot.x, y: spot.y },
-                          width: spot.width,
-                          height: spot.height,
+                          ...sizeOf(node.data.item),
                       }
                     : node;
             }),
         );
         setArranging(true);
-        // The tidy layout is what a fresh load uses, so forget moved windows.
+        // Saving bumps `layoutVersion`; this canvas is already there.
+        setSeenLayout(layoutVersion + 1);
         void submit(
-            { intent: 'reset-positions' },
+            { intent: 'arrange' },
             {
                 method: 'post',
                 action: links.action,
                 navigate: false,
-                fetcherKey: 'reset-positions',
+                fetcherKey: 'arrange',
             },
         );
-    }, [surface.items, setNodes, submit, links.action, locked]);
+    }, [
+        surface.items,
+        surface.relations,
+        setNodes,
+        submit,
+        links.action,
+        locked,
+        layoutVersion,
+    ]);
 
     // After the new positions reach the canvas: fit, then stop animating
     // moves, so dragging stays immediate.
