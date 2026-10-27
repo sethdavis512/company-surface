@@ -38,9 +38,10 @@ import {
     LIST_ITEMS,
     TEXT_STYLES,
     type DocumentBlock,
+    type TableBlock,
 } from '~/lib/portable-text';
 import type { DocumentItem } from '~/lib/surface';
-import { ItemCard, ItemChip } from './DocumentBody';
+import { DocumentTable, ItemCard, ItemChip } from './DocumentBody';
 import { InsertMenuPicker, ItemLinkPicker } from './EditorPickers';
 import { useSurfaceLinks } from './surface-context';
 
@@ -58,6 +59,14 @@ const schemaDefinition = defineSchema({
     ],
     blockObjects: [
         { name: 'itemEmbed', fields: [{ name: 'itemId', type: 'string' }] },
+        // Carried whole: the editor shows a table but doesn't edit its cells.
+        {
+            name: 'table',
+            fields: [
+                { name: 'headerRow', type: 'boolean' },
+                { name: 'rows', type: 'array' },
+            ],
+        },
     ],
     inlineObjects: [],
 });
@@ -170,6 +179,21 @@ const nodes = [
                     itemId={String((node as { itemId?: string }).itemId)}
                     editing
                 />
+            </div>
+        ),
+    }),
+    defineBlockObject({
+        type: 'table',
+        render: ({ attributes, children, node, selected }) => (
+            <div
+                {...attributes}
+                className={cx(
+                    'rounded-lg',
+                    selected && 'ring-ring ring-2 ring-offset-2',
+                )}
+            >
+                {children}
+                <DocumentTable table={node as unknown as TableBlock} />
             </div>
         ),
     }),

@@ -81,7 +81,7 @@ const markdownSchema = z
     .string()
     .max(20000)
     .describe(
-        'Markdown: paragraphs, ## and ### headings, - and 1. lists, > quotes, **bold**, *italic*, `code`, [text](https://...) links. Point at another card with [text](item:<cardId>), or put a card for one on a line of its own with ![](item:<cardId>).',
+        'Markdown: paragraphs, ## and ### headings, - and 1. lists, > quotes, | pipe | tables | (a `| --- |` line under the header row), **bold**, *italic*, `code`, [text](https://...) links. Point at another card with [text](item:<cardId>), or put a card for one on a line of its own with ![](item:<cardId>).',
     );
 
 const attachedToSchema = z

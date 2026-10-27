@@ -77,7 +77,7 @@ const markdownSchema = z
     .string()
     .max(20000)
     .describe(
-        'Document content as Markdown: paragraphs, ## and ### headings, - and 1. lists, > quotes, **bold**, *italic*, `code`, and [text](https://...) links. Point at other items with [text](item:<itemId>), or put a card for one on a line of its own with ![](item:<itemId>). Item ids come from list_items.',
+        'Document content as Markdown: paragraphs, ## and ### headings, - and 1. lists, > quotes, | pipe | tables | (a `| --- |` line under the header row), **bold**, *italic*, `code`, and [text](https://...) links. Point at other items with [text](item:<itemId>), or put a card for one on a line of its own with ![](item:<itemId>). Item ids come from list_items.',
     );
 
 /** A document as agents read it: Markdown instead of Portable Text blocks. */

@@ -9,6 +9,8 @@ import type {
     ItemEmbedBlock,
     ItemRefMark,
     LinkMark,
+    TableBlock,
+    TableCell,
 } from '~/lib/portable-text';
 import { KIND_ICONS, KIND_NAMES } from './kind-icons';
 import { useSurfaceItems, useSurfaceLinks } from './surface-context';
@@ -19,8 +21,8 @@ type Props = {
 
 /**
  * A document's Portable Text. Standard blocks render as prose; `itemRef`
- * marks become chips that open the item they point at, and `itemEmbed`
- * blocks become cards for it.
+ * marks become chips that open the item they point at, `itemEmbed`
+ * blocks become cards for it, and `table` blocks become tables.
  */
 export function DocumentBody({ blocks }: Props) {
     return (
@@ -31,27 +33,93 @@ export function DocumentBody({ blocks }: Props) {
     );
 }
 
+const marks: PortableTextComponents['marks'] = {
+    itemRef: ({ value, children }) => (
+        <ItemChip itemId={(value as ItemRefMark).itemId}>{children}</ItemChip>
+    ),
+    link: ({ value, children }) => (
+        <a
+            href={(value as LinkMark).href}
+            target="_blank"
+            rel="noreferrer noopener"
+        >
+            {children}
+        </a>
+    ),
+};
+
+/** A cell's text renders inline: no paragraph around it. */
+const cellComponents: PortableTextComponents = {
+    marks,
+    block: { normal: ({ children }) => <>{children}</> },
+};
+
+function CellText({ cell }: { cell: TableCell }) {
+    return (
+        <PortableText
+            value={
+                {
+                    _type: 'block',
+                    _key: cell._key,
+                    style: 'normal',
+                    children: cell.children,
+                    markDefs: cell.markDefs,
+                } as PortableTextBlock
+            }
+            components={cellComponents}
+        />
+    );
+}
+
+/** A table, scrolling sideways inside the document when it's too wide. */
+export function DocumentTable({ table }: { table: TableBlock }) {
+    const [first, ...rest] = table.rows;
+    const header = table.headerRow ? first : undefined;
+    const body = table.headerRow ? rest : table.rows;
+    return (
+        <div className="not-prose nowheel my-4 overflow-x-auto rounded-lg border">
+            <table className="w-full border-collapse text-sm">
+                {header && (
+                    <thead className="bg-muted/60">
+                        <tr>
+                            {header.cells.map((cell) => (
+                                <th
+                                    key={cell._key}
+                                    scope="col"
+                                    className="border-b px-3 py-2 text-left font-semibold"
+                                >
+                                    <CellText cell={cell} />
+                                </th>
+                            ))}
+                        </tr>
+                    </thead>
+                )}
+                <tbody>
+                    {body.map((row) => (
+                        <tr key={row._key} className="border-b last:border-b-0">
+                            {row.cells.map((cell) => (
+                                <td
+                                    key={cell._key}
+                                    className="px-3 py-2 align-top"
+                                >
+                                    <CellText cell={cell} />
+                                </td>
+                            ))}
+                        </tr>
+                    ))}
+                </tbody>
+            </table>
+        </div>
+    );
+}
+
 const components: PortableTextComponents = {
-    marks: {
-        itemRef: ({ value, children }) => (
-            <ItemChip itemId={(value as ItemRefMark).itemId}>
-                {children}
-            </ItemChip>
-        ),
-        link: ({ value, children }) => (
-            <a
-                href={(value as LinkMark).href}
-                target="_blank"
-                rel="noreferrer noopener"
-            >
-                {children}
-            </a>
-        ),
-    },
+    marks,
     types: {
         itemEmbed: ({ value }) => (
             <ItemCard itemId={(value as ItemEmbedBlock).itemId} />
         ),
+        table: ({ value }) => <DocumentTable table={value as TableBlock} />,
     },
 };
 
