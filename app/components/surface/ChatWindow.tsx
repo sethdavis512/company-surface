@@ -174,7 +174,7 @@ export function ChatWindow({ data, selected }: NodeProps<ChatNode>) {
                                     )}
                                     <p
                                         className={cx(
-                                            'rounded-2xl px-3.5 py-2 text-sm leading-snug',
+                                            'rounded-2xl px-3.5 py-2 text-sm leading-snug whitespace-pre-wrap',
                                             mine
                                                 ? 'bg-primary text-primary-foreground rounded-br-md'
                                                 : 'bg-muted text-foreground rounded-bl-md',

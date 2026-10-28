@@ -135,7 +135,7 @@ function run(body: () => unknown) {
  * Tools renamed to say "card" (the app's word for what sits on a surface),
  * by new name: the old names still work, so agents set up before keep going.
  */
-const OLD_TOOL_NAMES: Record<string, string> = {
+export const OLD_TOOL_NAMES: Record<string, string> = {
     list_cards: 'list_items',
     get_card: 'get_item',
     link_cards: 'link_items',

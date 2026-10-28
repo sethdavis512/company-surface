@@ -1,4 +1,5 @@
 import type { SessionUser } from '~/context';
+import { env } from '~/lib/env.server';
 import { MOCK_REPLY_DELAY_MS, pickMockReply } from '~/lib/mock-chat';
 import {
     brandRefreshSurface,
@@ -12,6 +13,7 @@ import {
 } from '~/lib/portable-text';
 import {
     AGENT_ID,
+    mentionsAgent,
     frameItems,
     isGifUrl,
     noteTitle,
@@ -94,6 +96,12 @@ type SurfaceRecord = {
 };
 
 type Store = {
+    /**
+     * Made fresh with each store, so anything kept outside it (the agent's
+     * Mastra threads) can tell this store's chats from a reseeded one's,
+     * whose chats reuse the seed's ids.
+     */
+    epoch: string;
     spaces: Space[];
     /** In order, across all spaces. */
     surfaces: SurfaceRecord[];
@@ -149,6 +157,7 @@ Northwind runs **240 seats** across three regions and renews in March.
         positions: seedSurface.positions ?? {},
     });
     return {
+        epoch: crypto.randomUUID(),
         spaces: [
             {
                 id: 'product',
@@ -676,6 +685,8 @@ function store(): Store {
         scope[STORE_KEY] = seed();
     }
     const current = scope[STORE_KEY];
+    // Stores from before the agent's threads (kept across dev reloads).
+    current.epoch ??= crypto.randomUUID();
     // Stores from before locking (kept across dev reloads).
     for (const surface of current.surfaces) surface.arrangement.locked ??= [];
     // Documents from before Portable Text: seeded ones take the new seed's
@@ -998,9 +1009,24 @@ export function createChat({
 }
 
 /**
- * Adds a message. When a person (not an agent) writes, someone else in the
- * chat answers after a pause, from the mock reply service; `awaitingReply`
- * is true until then.
+ * Whether the real agent (Mastra, `app/mastra/surface-agent.ts`) answers
+ * people's messages. It needs an Anthropic key, and stays off in unit and
+ * E2E runs, which rely on the mock reply service.
+ */
+export function agentIsLive(): boolean {
+    return (
+        Boolean(env.ANTHROPIC_API_KEY) &&
+        !env.E2E_TEST_HOOKS &&
+        env.NODE_ENV !== 'test'
+    );
+}
+
+/**
+ * Adds a message. When a person (not an agent) writes, someone answers;
+ * `awaitingReply` is true until then. With the agent live, it answers in
+ * chats it's part of, and joins any chat where someone writes @agent.
+ * Otherwise someone else in the chat answers after a pause, from the mock
+ * reply service.
  */
 export function postMessage({
     chatId,
@@ -1028,7 +1054,21 @@ export function postMessage({
         chat.participantIds.push(authorId);
     }
 
-    if (authorId === ME_ID) {
+    if (
+        authorId === ME_ID &&
+        agentIsLive() &&
+        (chat.participantIds.includes(AGENT_ID) || mentionsAgent(text))
+    ) {
+        if (!chat.participantIds.includes(AGENT_ID)) {
+            chat.participantIds.push(AGENT_ID);
+        }
+        chat.awaitingReply = true;
+        // Imported on demand: the agent (and its Mastra database) stays out
+        // of every request that never asks it anything.
+        void import('~/mastra/surface-agent').then(({ answerInChat }) =>
+            answerInChat(chat.id),
+        );
+    } else if (authorId === ME_ID) {
         chat.awaitingReply = true;
         setTimeout(() => {
             chat.messages.push(
@@ -1038,6 +1078,39 @@ export function postMessage({
         }, MOCK_REPLY_DELAY_MS);
     }
     return structuredClone(message);
+}
+
+/** Rewrites a message's text in place: an agent's reply as it streams in. */
+export function editMessage({
+    chatId,
+    messageId,
+    text,
+}: {
+    chatId: string;
+    messageId: string;
+    text: string;
+}): void {
+    const chat = requireItem(chatId);
+    if (chat.kind !== 'chat') {
+        throw new SurfaceError(`"${chatId}" is a ${chat.kind}, not a chat.`);
+    }
+    const message = chat.messages.find(({ id }) => id === messageId);
+    if (!message) throw new SurfaceError(`No message with id "${messageId}".`);
+    message.text = text;
+}
+
+/** Shows or hides "typing" on a chat while an agent works on a reply. */
+export function setAwaitingReply(chatId: string, awaiting: boolean): void {
+    const chat = requireItem(chatId);
+    if (chat.kind !== 'chat') {
+        throw new SurfaceError(`"${chatId}" is a ${chat.kind}, not a chat.`);
+    }
+    chat.awaitingReply = awaiting;
+}
+
+/** This store's epoch (see `Store.epoch`). */
+export function storeEpoch(): string {
+    return store().epoch;
 }
 
 export function createDocument({

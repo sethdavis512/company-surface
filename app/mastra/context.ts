@@ -55,3 +55,31 @@ export function contextThreadId(
 export function contextModel(context?: WithRequestContext): string | undefined {
     return readString(context, MODEL_KEY);
 }
+
+const CHAT_KEY = 'surfaceChat';
+
+/** Where the surface agent is answering: the chat card and its surface. */
+export type ChatContext = {
+    chatId: string;
+    title: string;
+    surfaceId: string;
+    surfaceName: string;
+    spaceName: string;
+};
+
+/** The request context for one of the surface agent's replies. */
+export function chatRequestContext(chat: ChatContext): RequestContext {
+    const requestContext = new RequestContext();
+    requestContext.set(CHAT_KEY, chat);
+    return requestContext;
+}
+
+/** The chat the surface agent is answering in, if any. */
+export function contextChat(
+    context?: WithRequestContext,
+): ChatContext | undefined {
+    const value = context?.requestContext?.get(CHAT_KEY);
+    return value && typeof value === 'object'
+        ? (value as ChatContext)
+        : undefined;
+}

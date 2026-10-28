@@ -418,6 +418,14 @@ export function normalizeWebUrl(input: string): string | null {
     return url.toString();
 }
 
+/**
+ * Whether a message calls the agent in: "@agent" or "@Surface Agent" (its
+ * name), as a word of its own.
+ */
+export function mentionsAgent(text: string): boolean {
+    return /(^|[^\w@])@(agent|surface agent)\b/i.test(text);
+}
+
 /** Whether an agent, not a person, made this item. */
 export function isAgentMade(item: { createdById: string }): boolean {
     return item.createdById === AGENT_ID;
