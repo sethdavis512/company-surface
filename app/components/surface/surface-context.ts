@@ -110,22 +110,3 @@ export function useRenaming(): Renaming {
     if (!value) throw new Error('useRenaming needs a RenamingContext');
     return value;
 }
-
-type Resizing = {
-    /** Resizes a card on the canvas while its grip is dragged. */
-    resize: (itemId: string, size: { width: number; height: number }) => void;
-    /** Saves the size it was dropped at (`resize-card`). */
-    commitResize: (
-        itemId: string,
-        size: { width: number; height: number },
-    ) => void;
-};
-
-/** Resizing cards that keep their own size (shapes). */
-export const ResizingContext = createContext<Resizing | null>(null);
-
-export function useResizing(): Resizing {
-    const value = useContext(ResizingContext);
-    if (!value) throw new Error('useResizing needs a ResizingContext');
-    return value;
-}

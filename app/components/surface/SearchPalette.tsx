@@ -51,7 +51,6 @@ const ADD_COMMANDS: AddCommand[] = [
     { add: 'board', label: 'Add board' },
     { add: 'note', label: 'Add sticky note' },
     { add: 'sketch', label: 'Add sketch' },
-    { add: 'shape', label: 'Add shape' },
     { add: 'video', label: 'Add video…' },
     { add: 'web', label: 'Add web page…' },
     { add: 'image', label: 'Add image…' },

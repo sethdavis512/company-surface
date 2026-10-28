@@ -42,7 +42,6 @@ const ADD_HERE: { kind: SurfaceItemKind; label: string }[] = [
     { kind: 'board', label: 'Board' },
     { kind: 'note', label: 'Sticky note' },
     { kind: 'sketch', label: 'Sketch' },
-    { kind: 'shape', label: 'Shape' },
     { kind: 'video', label: 'Video…' },
     { kind: 'web', label: 'Web page…' },
     { kind: 'image', label: 'Image…' },

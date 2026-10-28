@@ -133,8 +133,6 @@ function entriesOf(item: SurfaceItem, { nameOf }: Options): Entry[] {
             return [own(item.text)];
         case 'sketch':
             return [own('')];
-        case 'shape':
-            return [own(item.shape)];
     }
 }
 

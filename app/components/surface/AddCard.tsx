@@ -27,7 +27,6 @@ import {
     youtubeVideoId,
     type SurfaceItemKind,
     type UrlKind,
-    type ShapeType,
 } from '~/lib/surface';
 import { useSurfaceLinks } from './surface-context';
 import { TOP_PX } from './ZoomOverlay';
@@ -44,8 +43,6 @@ type AddCard = {
         options?: {
             attachedTo?: string;
             at?: { x: number; y: number };
-            /** For a shape: its outline (a rectangle unless given). */
-            shape?: ShapeType;
         },
     ) => void;
 };
@@ -114,7 +111,6 @@ export function AddCardProvider({ children }: { children: ReactNode }) {
             at?: { x: number; y: number };
             url?: string;
             title?: string;
-            shape?: ShapeType;
         },
     ) {
         const form: Record<string, string> = { intent: 'create-card', kind };
@@ -137,7 +133,6 @@ export function AddCardProvider({ children }: { children: ReactNode }) {
         }
         if (fields.url) form.url = fields.url;
         if (fields.title) form.title = fields.title;
-        if (fields.shape) form.shape = fields.shape;
         void fetcher.submit(form, { method: 'post', action: links.action });
     }
 
