@@ -48,6 +48,7 @@
         ]
     },
     "dependencies": {
+        "@ai-sdk/anthropic": "^3.0.135",
         "@ai-sdk/react": "^3.0.294",
         "@base-ui/react": "^1.8.0",
         "@dnd-kit/core": "6.3.1",
@@ -73,7 +74,7 @@
         "@react-email/render": "^2.1.0",
         "@react-router/node": "8.4.0",
         "@react-router/serve": "8.4.0",
-        "@sethdavis512/trellis": "git+ssh://git@github.com/sethdavis512/trellis.git#main",
+        "@sethdavis512/trellis": "^0.1.0",
         "@tailwindcss/typography": "^0.5.20",
         "@tanstack/charts": "^1.1.0",
         "@trigger.dev/sdk": "^4.6.4",

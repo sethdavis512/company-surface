@@ -1,5 +1,5 @@
 import type { ReactElement } from 'react';
-import { Link, useFetcher, useSubmit } from 'react-router';
+import { Link, useSubmit } from 'react-router';
 import { useFlow } from '@sethdavis512/trellis';
 import {
     BringToFrontIcon,
@@ -11,7 +11,6 @@ import {
     PaletteIcon,
     SendToBackIcon,
     Trash2Icon,
-    ShapesIcon,
 } from 'lucide-react';
 import { cx } from 'cva.config';
 import { Button } from '~/components/ui/button';
@@ -25,15 +24,12 @@ import {
     MenuTrigger,
 } from '~/components/ui/menu';
 import {
-    SHAPE_TYPES,
     WINDOW_COLOR_NAMES,
     type SurfaceItemKind,
     type WindowColor,
 } from '~/lib/surface';
 import { useAddCard } from './AddCard';
 import { useDeleteCard } from './DeleteCard';
-import { ShapePreview } from './ShapeTray';
-import { shapeFetcherKey } from './ShapeWindow';
 import { KindItem } from './AddCardMenu';
 import {
     useStacking,
@@ -133,9 +129,6 @@ export function WindowControls({ itemId, title, focused, selected }: Props) {
                     title={title}
                     chat={kindOf(itemId) === 'chat'}
                 />
-            )}
-            {kindOf(itemId) === 'shape' && (
-                <ShapeMenu itemId={itemId} title={title} />
             )}
             <ColorPicker itemId={itemId} title={title} />
             <ControlButton
@@ -290,59 +283,6 @@ type ColorPickerProps = {
 };
 
 /** Picks the window's border color from the six-color palette, or none. */
-/** Changes a shape's outline (`set-shape`), shown at once. */
-function ShapeMenu({ itemId, title }: { itemId: string; title: string }) {
-    const links = useSurfaceLinks();
-    const fetcher = useFetcher({ key: shapeFetcherKey(itemId) });
-    const { itemOf } = useSurfaceItems();
-    const item = itemOf(itemId);
-    const pending = fetcher.formData?.get('shape');
-    const current =
-        typeof pending === 'string'
-            ? pending
-            : item?.kind === 'shape'
-              ? item.shape
-              : 'rectangle';
-
-    return (
-        <Menu>
-            <MenuTrigger
-                render={
-                    <Button
-                        variant="outline"
-                        size="icon"
-                        aria-label={`Shape of ${title}`}
-                        title="Shape"
-                        className="bg-card rounded-full shadow-md"
-                    />
-                }
-            >
-                <ShapesIcon aria-hidden="true" />
-            </MenuTrigger>
-            <MenuPopup side="right" align="start" className="w-44">
-                <MenuRadioGroup
-                    value={current}
-                    onValueChange={(shape: string) =>
-                        void fetcher.submit(
-                            { intent: 'set-shape', itemId, shape },
-                            { method: 'post', action: links.action },
-                        )
-                    }
-                >
-                    {SHAPE_TYPES.map((shape) => (
-                        <MenuRadioItem key={shape} value={shape} closeOnClick>
-                            <span className="flex items-center gap-2 capitalize">
-                                <ShapePreview shape={shape} />
-                                {shape}
-                            </span>
-                        </MenuRadioItem>
-                    ))}
-                </MenuRadioGroup>
-            </MenuPopup>
-        </Menu>
-    );
-}
-
 function ColorPicker({ itemId, title }: ColorPickerProps) {
     const { colorOf, setColor } = useWindowColors();
     const color = colorOf(itemId);

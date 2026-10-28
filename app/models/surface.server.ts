@@ -1,6 +1,11 @@
 import type { SessionUser } from '~/context';
-import { env } from '~/lib/env.server';
 import { MOCK_REPLY_DELAY_MS, pickMockReply } from '~/lib/mock-chat';
+import {
+    arrangeGroups,
+    currentLayout,
+    topLeftOf,
+    type ArrangeDirection,
+} from '~/lib/arrange';
 import {
     brandRefreshSurface,
     launchRetroSurface,
@@ -13,7 +18,7 @@ import {
 } from '~/lib/portable-text';
 import {
     AGENT_ID,
-    mentionsAgent,
+    isAgentChat,
     frameItems,
     isGifUrl,
     noteTitle,
@@ -52,12 +57,8 @@ import {
     type SurfaceItem,
     type WindowColor,
     TITLE_MAX,
-    SHAPE_MAX,
-    SHAPE_MIN,
-    WINDOW_SIZES,
-    type ShapeItem,
-    type ShapeType,
     hangingUnder,
+    parentIdOf,
     isRenamable,
 } from '~/lib/surface';
 
@@ -96,12 +97,6 @@ type SurfaceRecord = {
 };
 
 type Store = {
-    /**
-     * Made fresh with each store, so anything kept outside it (the agent's
-     * Mastra threads) can tell this store's chats from a reseeded one's,
-     * whose chats reuse the seed's ids.
-     */
-    epoch: string;
     spaces: Space[];
     /** In order, across all spaces. */
     surfaces: SurfaceRecord[];
@@ -116,6 +111,45 @@ type Unplaced<T> = T extends unknown ? Omit<T, 'surfaceId'> : never;
 
 /** The seed's main surface: everything the app started with is on it. */
 export const SEED_SURFACE_ID = 'atlas-launch';
+
+/** A space with one live agent chat on it, to try the agent from scratch. */
+function playground(): {
+    space: Space;
+    surface: SurfaceRecord;
+    chat: ChatItem;
+} {
+    const chat: ChatItem = {
+        kind: 'chat',
+        id: 'chat-agent',
+        surfaceId: 'agent-test-drive',
+        title: 'Ask the agent',
+        participantIds: [ME_ID, AGENT_ID],
+        messages: [
+            {
+                id: 'msg-agent-hello',
+                authorId: AGENT_ID,
+                text: "Hi! I work on this surface with you. Ask me to draft a doc, chart some numbers, start an issue board, pin a note, sketch, or pull in a page, video, or image, and I'll put it on the canvas next to this chat.",
+                sentAt: '2026-10-25T09:00:00Z',
+            },
+        ],
+        createdById: AGENT_ID,
+    };
+    return {
+        space: {
+            id: 'playground',
+            name: 'Playground',
+            description: 'Try the agent on a blank canvas.',
+        },
+        surface: {
+            id: chat.surfaceId,
+            spaceId: 'playground',
+            name: 'Agent test drive',
+            description: 'One chat with the agent; what it makes lands here.',
+            arrangement: emptyArrangement([chat.id]),
+        },
+        chat,
+    };
+}
 
 function emptyArrangement(itemIds: string[] = []): Arrangement {
     return { stack: itemIds, colors: {}, positions: {}, locked: [] };
@@ -150,14 +184,13 @@ Northwind runs **240 seats** across three regions and renews in March.
 `),
     };
     const retro = launchRetroSurface('launch-retro');
+    const play = playground();
     const brand = brandRefreshSurface('brand-refresh');
     const arranged = (seedSurface: SeedSurface): Arrangement => ({
         ...emptyArrangement(seedSurface.items.map((item) => item.id)),
         colors: seedSurface.colors,
-        positions: seedSurface.positions ?? {},
     });
     return {
-        epoch: crypto.randomUUID(),
         spaces: [
             {
                 id: 'product',
@@ -174,6 +207,7 @@ Northwind runs **240 seats** across three regions and renews in March.
                 name: 'Design',
                 description: 'How Atlas looks, sounds, and feels.',
             },
+            play.space,
         ],
         surfaces: [
             {
@@ -206,8 +240,15 @@ Northwind runs **240 seats** across three regions and renews in March.
                     'A warmer Atlas for launch: reviews, assets, and references.',
                 arrangement: arranged(brand),
             },
+            play.surface,
         ],
-        items: [...launch, northwindPlan, ...retro.items, ...brand.items],
+        items: [
+            ...launch,
+            northwindPlan,
+            ...retro.items,
+            ...brand.items,
+            play.chat,
+        ],
         relations: [
             ...content.relations,
             ...retro.relations,
@@ -685,10 +726,17 @@ function store(): Store {
         scope[STORE_KEY] = seed();
     }
     const current = scope[STORE_KEY];
-    // Stores from before the agent's threads (kept across dev reloads).
-    current.epoch ??= crypto.randomUUID();
     // Stores from before locking (kept across dev reloads).
     for (const surface of current.surfaces) surface.arrangement.locked ??= [];
+    // Stores from before shapes were removed: their shape cards go.
+    dropRemovedKinds(current);
+    // Stores from before the playground space get it.
+    if (!current.spaces.some((space) => space.id === 'playground')) {
+        const play = playground();
+        current.spaces.push(play.space);
+        current.surfaces.push(play.surface);
+        current.items.push(play.chat);
+    }
     // Documents from before Portable Text: seeded ones take the new seed's
     // content (with its links), others are converted.
     const legacy = current.items.filter(
@@ -708,6 +756,37 @@ function store(): Store {
         }
     }
     return current;
+}
+
+/** Kinds of card the app no longer has (shapes, removed 2026-10-25). */
+const REMOVED_KINDS = new Set(['shape']);
+
+/**
+ * Takes cards of removed kinds out of a store made by older code (kept
+ * across dev reloads), with their links, arrangement, and view framing.
+ */
+function dropRemovedKinds(current: Store) {
+    const gone = new Set(
+        current.items
+            .filter((item) => REMOVED_KINDS.has(item.kind as string))
+            .map((item) => item.id),
+    );
+    if (gone.size === 0) return;
+    current.items = current.items.filter((item) => !gone.has(item.id));
+    current.relations = current.relations.filter(
+        (relation) => !gone.has(relation.from) && !gone.has(relation.to),
+    );
+    for (const { arrangement } of current.surfaces) {
+        arrangement.stack = arrangement.stack.filter((id) => !gone.has(id));
+        arrangement.locked = arrangement.locked.filter((id) => !gone.has(id));
+        for (const id of gone) {
+            delete arrangement.colors[id];
+            delete arrangement.positions[id];
+        }
+    }
+    for (const view of current.views) {
+        view.itemIds = view.itemIds?.filter((id) => !gone.has(id));
+    }
 }
 
 /**
@@ -1009,33 +1088,27 @@ export function createChat({
 }
 
 /**
- * Whether the real agent (Mastra, `app/mastra/surface-agent.ts`) answers
- * people's messages. It needs an Anthropic key, and stays off in unit and
- * E2E runs, which rely on the mock reply service.
- */
-export function agentIsLive(): boolean {
-    return (
-        Boolean(env.ANTHROPIC_API_KEY) &&
-        !env.E2E_TEST_HOOKS &&
-        env.NODE_ENV !== 'test'
-    );
-}
-
-/**
- * Adds a message. When a person (not an agent) writes, someone answers;
- * `awaitingReply` is true until then. With the agent live, it answers in
- * chats it's part of, and joins any chat where someone writes @agent.
- * Otherwise someone else in the chat answers after a pause, from the mock
- * reply service.
+ * Adds a message. When a person (not an agent) writes, someone else in the
+ * chat answers after a pause, from the mock reply service; `awaitingReply`
+ * is true until then. Agent chats (`isAgentChat`) never get mock replies:
+ * only the live agent answers them, so with it off nobody does rather than
+ * the agent seeming to answer. `mockReply: false` skips it anywhere.
  */
 export function postMessage({
     chatId,
     authorId,
     text,
+    id = crypto.randomUUID(),
+    parts,
+    mockReply = true,
 }: {
     chatId: string;
     authorId: string;
     text: string;
+    /** The id the client already shows it under (a streamed message's). */
+    id?: string;
+    parts?: ChatMessage['parts'];
+    mockReply?: boolean;
 }): ChatMessage {
     const chat = requireItem(chatId);
     if (chat.kind !== 'chat') {
@@ -1043,32 +1116,22 @@ export function postMessage({
     }
     requireKnownPeople([authorId]);
 
+    if (chat.messages.some((existing) => existing.id === id)) {
+        throw new SurfaceError(`A message with id "${id}" is already there.`);
+    }
     const message: ChatMessage = {
-        id: crypto.randomUUID(),
+        id,
         authorId,
         text,
         sentAt: new Date().toISOString(),
+        ...(parts && { parts }),
     };
     chat.messages.push(message);
     if (!chat.participantIds.includes(authorId)) {
         chat.participantIds.push(authorId);
     }
 
-    if (
-        authorId === ME_ID &&
-        agentIsLive() &&
-        (chat.participantIds.includes(AGENT_ID) || mentionsAgent(text))
-    ) {
-        if (!chat.participantIds.includes(AGENT_ID)) {
-            chat.participantIds.push(AGENT_ID);
-        }
-        chat.awaitingReply = true;
-        // Imported on demand: the agent (and its Mastra database) stays out
-        // of every request that never asks it anything.
-        void import('~/mastra/surface-agent').then(({ answerInChat }) =>
-            answerInChat(chat.id),
-        );
-    } else if (authorId === ME_ID) {
+    if (authorId === ME_ID && mockReply && !isAgentChat(chat)) {
         chat.awaitingReply = true;
         setTimeout(() => {
             chat.messages.push(
@@ -1080,37 +1143,13 @@ export function postMessage({
     return structuredClone(message);
 }
 
-/** Rewrites a message's text in place: an agent's reply as it streams in. */
-export function editMessage({
-    chatId,
-    messageId,
-    text,
-}: {
-    chatId: string;
-    messageId: string;
-    text: string;
-}): void {
-    const chat = requireItem(chatId);
-    if (chat.kind !== 'chat') {
-        throw new SurfaceError(`"${chatId}" is a ${chat.kind}, not a chat.`);
-    }
-    const message = chat.messages.find(({ id }) => id === messageId);
-    if (!message) throw new SurfaceError(`No message with id "${messageId}".`);
-    message.text = text;
-}
-
-/** Shows or hides "typing" on a chat while an agent works on a reply. */
-export function setAwaitingReply(chatId: string, awaiting: boolean): void {
+/** Shows (or stops showing) someone typing in a chat: the live agent's turn. */
+export function setAwaitingReply(chatId: string, awaiting: boolean) {
     const chat = requireItem(chatId);
     if (chat.kind !== 'chat') {
         throw new SurfaceError(`"${chatId}" is a ${chat.kind}, not a chat.`);
     }
     chat.awaitingReply = awaiting;
-}
-
-/** This store's epoch (see `Store.epoch`). */
-export function storeEpoch(): string {
-    return store().epoch;
 }
 
 export function createDocument({
@@ -1679,7 +1718,6 @@ export function addCard({
     url,
     attachedTo,
     position,
-    shape,
     authorId = ME_ID,
 }: {
     surfaceId: string;
@@ -1688,8 +1726,6 @@ export function addCard({
     url?: string;
     attachedTo?: string;
     position?: { x: number; y: number };
-    /** For a shape: its outline. */
-    shape?: ShapeType;
     authorId?: string;
 }): SurfaceItem {
     requireSurface(surfaceId);
@@ -1723,9 +1759,6 @@ export function addCard({
             break;
         case 'sketch':
             item = createSketch({ surfaceId, title: named, authorId });
-            break;
-        case 'shape':
-            item = createShape({ surfaceId, shape, title: named, authorId });
             break;
         case 'document':
             item = createDocument({
@@ -1926,76 +1959,6 @@ export function updateNote({
     note.title = noteTitle(text);
     note.updatedAt = nextTimestamp(note.updatedAt);
     return structuredClone(note);
-}
-
-/** Adds a flowchart shape, labeled with its title. */
-export function createShape({
-    surfaceId,
-    shape = 'rectangle',
-    title,
-    width = WINDOW_SIZES.shape.width,
-    height = WINDOW_SIZES.shape.height,
-    authorId = AGENT_ID,
-}: {
-    surfaceId: string;
-    shape?: ShapeType;
-    title?: string;
-    width?: number;
-    height?: number;
-    authorId?: string;
-}): ShapeItem {
-    requireSurface(surfaceId);
-    requireKnownPeople([authorId]);
-    const item: ShapeItem = {
-        kind: 'shape',
-        id: newId('shape'),
-        surfaceId,
-        title: title?.trim() || shapeName(shape),
-        shape,
-        ...shapeSize(width, height),
-        createdById: authorId,
-        updatedAt: new Date().toISOString(),
-    };
-    addItem(item);
-    return structuredClone(item);
-}
-
-/** "parallelogram" → "Parallelogram", a new shape's label. */
-function shapeName(shape: ShapeType) {
-    return `${shape[0].toUpperCase()}${shape.slice(1)}`;
-}
-
-function shapeSize(width: number, height: number) {
-    const fit = (value: number) =>
-        Math.round(Math.min(SHAPE_MAX, Math.max(SHAPE_MIN, value)));
-    return { width: fit(width), height: fit(height) };
-}
-
-function requireShape(itemId: string): ShapeItem {
-    const item = requireItem(itemId);
-    if (item.kind !== 'shape') {
-        throw new SurfaceError(`"${itemId}" is a ${item.kind}, not a shape.`);
-    }
-    return item;
-}
-
-/** Changes a shape's outline (a diamond becomes a hexagon, say). */
-export function setShape(itemId: string, shape: ShapeType): ShapeItem {
-    const item = requireShape(itemId);
-    item.shape = shape;
-    item.updatedAt = nextTimestamp(item.updatedAt);
-    return structuredClone(item);
-}
-
-/** Resizes a shape, kept within `SHAPE_MIN` and `SHAPE_MAX`. */
-export function resizeShape(
-    itemId: string,
-    size: { width: number; height: number },
-): ShapeItem {
-    const item = requireShape(itemId);
-    Object.assign(item, shapeSize(size.width, size.height));
-    item.updatedAt = nextTimestamp(item.updatedAt);
-    return structuredClone(item);
 }
 
 /** Starts a blank sketch. */
@@ -2232,7 +2195,127 @@ export function moveWindows(
     }
 }
 
-/** Forgets every moved window, so all of them use the tidy layout again. */
+/** A surface's cards as a fresh load lays them out, with what's locked. */
+export function getLayout(surfaceId: string) {
+    const { arrangement } = requireSurface(surfaceId);
+    const items = store().items.filter((item) => item.surfaceId === surfaceId);
+    const byId = new Map(items.map((item) => [item.id, item]));
+    return currentLayout(items, arrangement.positions).map((spot) => {
+        const item = byId.get(spot.id)!;
+        const parentId = parentIdOf(item);
+        return {
+            id: spot.id,
+            kind: spot.kind,
+            title: item.title,
+            x: Math.round(spot.x),
+            y: Math.round(spot.y),
+            width: spot.width,
+            height: spot.height,
+            ...(parentId && byId.has(parentId) && { hangsUnder: parentId }),
+            ...(arrangement.locked.includes(spot.id) && { locked: true }),
+        };
+    });
+}
+
+/**
+ * Lays out groups of cards on a surface (`arrangeGroups`) and saves where
+ * they land, starting at `origin` (else where the cards it moves begin).
+ * Open canvases slide to it (`layoutVersion`).
+ */
+export function arrangeCards({
+    surfaceId,
+    groups,
+    direction,
+    origin,
+    gap,
+    rest,
+}: {
+    surfaceId: string;
+    groups: string[][];
+    direction: ArrangeDirection;
+    origin?: { x: number; y: number };
+    gap?: number;
+    rest?: 'append' | 'leave';
+}) {
+    const surface = requireSurface(surfaceId);
+    const items = store().items.filter((item) => item.surfaceId === surfaceId);
+    const ids = new Set(items.map((item) => item.id));
+    const unknown = groups.flat().filter((id) => !ids.has(id));
+    if (unknown.length > 0) {
+        throw new SurfaceError(
+            `Not on this surface: ${unknown.join(', ')}. See list_cards.`,
+        );
+    }
+    const { arrangement } = surface;
+    const laid = arrangeGroups(items, groups, {
+        direction,
+        origin: { x: 0, y: 0 },
+        gap,
+        locked: new Set(arrangement.locked),
+        rest,
+    });
+    // Start where the cards it moves are now, unless told otherwise.
+    const start =
+        origin ??
+        topLeftOf(
+            currentLayout(items, arrangement.positions).filter(
+                (spot) => spot.id in laid.positions,
+            ),
+        );
+    const shift = (spot: { x: number; y: number }) => ({
+        x: Math.round(spot.x + start.x),
+        y: Math.round(spot.y + start.y),
+    });
+    for (const [id, spot] of Object.entries(laid.positions)) {
+        arrangement.positions[id] = shift(spot);
+    }
+    arrangement.layoutVersion = (arrangement.layoutVersion ?? 0) + 1;
+    return {
+        moved: Object.keys(laid.positions).length,
+        skipped: laid.skipped,
+        groups: laid.groups.map((box) => ({ ...box, ...shift(box) })),
+    };
+}
+
+/**
+ * Moves one card to a spot (its top-left corner), taking whatever hangs
+ * under it along. Open canvases slide to it.
+ */
+export function moveCard({
+    itemId,
+    x,
+    y,
+}: {
+    itemId: string;
+    x: number;
+    y: number;
+}) {
+    const item = requireItem(itemId);
+    const surface = requireSurface(item.surfaceId);
+    const { arrangement } = surface;
+    if (arrangement.locked.includes(itemId)) {
+        throw new SurfaceError(`"${item.title}" is locked in place.`);
+    }
+    const items = store().items.filter(
+        (candidate) => candidate.surfaceId === surface.id,
+    );
+    const now = new Map(
+        currentLayout(items, arrangement.positions).map((spot) => [
+            spot.id,
+            spot,
+        ]),
+    );
+    const from = now.get(itemId)!;
+    const dx = x - from.x;
+    const dy = y - from.y;
+    for (const id of [itemId, ...hangingUnder(itemId, items)]) {
+        const spot = now.get(id)!;
+        arrangement.positions[id] = { x: spot.x + dx, y: spot.y + dy };
+    }
+    arrangement.layoutVersion = (arrangement.layoutVersion ?? 0) + 1;
+    return { id: item.id, kind: item.kind, title: item.title, x, y };
+}
+
 /** Forgets moved windows, except locked ones, which stay put. */
 export function resetWindowPositions(surfaceId: string) {
     const arrangement = requireSurface(surfaceId).arrangement;

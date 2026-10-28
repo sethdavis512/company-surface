@@ -11,8 +11,6 @@ import {
     type IssueStatus,
     type NoteItem,
     type PullRequestItem,
-    type ShapeItem,
-    type ShapeType,
     type SketchItem,
     type SketchStroke,
     type Relation,
@@ -37,8 +35,6 @@ export type SeedSurface = {
     relations: Relation[];
     /** Palette colors by card id (notes take theirs from here). */
     colors: Partial<Record<string, WindowColor>>;
-    /** Where cards start, when the tidy row won't do (a flowchart). */
-    positions?: Partial<Record<string, { x: number; y: number }>>;
 };
 
 const DAY = '2026-10-23';
@@ -79,25 +75,6 @@ function ellipse(
             Math.round((cy + ry * Math.sin(angle)) * 10) / 10,
         ];
     }).flat();
-}
-
-function shape(
-    surfaceId: string,
-    id: string,
-    outline: ShapeType,
-    title: string,
-): ShapeItem {
-    return {
-        kind: 'shape',
-        id,
-        surfaceId,
-        title,
-        shape: outline,
-        width: outline === 'diamond' ? 200 : 180,
-        height: outline === 'diamond' ? 140 : 110,
-        createdById: AGENT_ID,
-        updatedAt: at('16:30'),
-    };
 }
 
 function issue(
@@ -362,35 +339,14 @@ Three agents worked the launch follow-ups today, each in its own chat with a pul
         ),
     ];
 
-    // How an agent's pull request ships, drawn as a flowchart.
-    const flow = [
-        shape(surfaceId, 'shape-flow-open', 'circle', 'Agent opens a PR'),
-        shape(surfaceId, 'shape-flow-checks', 'diamond', 'Checks pass?'),
-        shape(surfaceId, 'shape-flow-fix', 'hexagon', 'Agent fixes it'),
-        shape(surfaceId, 'shape-flow-review', 'rounded', 'Human review'),
-        shape(surfaceId, 'shape-flow-ship', 'arrow', 'Merge and ship'),
-    ];
-    const step = (from: string, to: string, label: string) => ({
-        id: `r-${from}-${to}`,
-        from,
-        to,
-        label,
-    });
-
     return {
         items: [
             ...threads.flatMap((thread) => thread.items),
             summary,
             ...notes,
-            ...flow,
         ],
         relations: [
             ...threads.flatMap((thread) => thread.relations),
-            step('shape-flow-open', 'shape-flow-checks', 'then'),
-            step('shape-flow-checks', 'shape-flow-fix', 'no'),
-            step('shape-flow-fix', 'shape-flow-checks', 'retry'),
-            step('shape-flow-checks', 'shape-flow-review', 'yes'),
-            step('shape-flow-review', 'shape-flow-ship', 'approved'),
             {
                 id: 'r-retro-search',
                 from: 'doc-retro-notes',
@@ -403,20 +359,6 @@ Three agents worked the launch follow-ups today, each in its own chat with a pul
             'note-retro-change': 'rose',
             'note-retro-try': 'sky',
             'note-retro-ask': 'amber',
-            'shape-flow-open': 'violet',
-            'shape-flow-checks': 'amber',
-            'shape-flow-fix': 'rose',
-            'shape-flow-review': 'sky',
-            'shape-flow-ship': 'emerald',
-        },
-        // Laid out as a flowchart under the agents' columns, the fix loop
-        // dropping below the check.
-        positions: {
-            'shape-flow-open': { x: 0, y: 1960 },
-            'shape-flow-checks': { x: 300, y: 1945 },
-            'shape-flow-review': { x: 640, y: 1960 },
-            'shape-flow-ship': { x: 940, y: 1960 },
-            'shape-flow-fix': { x: 310, y: 2220 },
         },
     };
 }
