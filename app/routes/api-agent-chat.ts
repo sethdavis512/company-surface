@@ -1,14 +1,22 @@
-import { consumeStream, createAgentUIStreamResponse, generateId } from 'ai';
+import { toAISdkStream } from '@mastra/ai-sdk';
+import {
+    consumeStream,
+    createUIMessageStream,
+    createUIMessageStreamResponse,
+    generateId,
+} from 'ai';
 import { data } from 'react-router';
 import { z } from 'zod';
 import {
     chatHistory,
     createSurfaceAgent,
     replyText,
+    type SurfaceAgentUIMessage,
 } from '~/agent/surface-agent.server';
 import { requireUserFromContext } from '~/context';
 import { env } from '~/lib/env.server';
 import { log } from '~/lib/logger.server';
+import { WORKSPACE_RESOURCE_ID, getWorkspaceMemory } from '~/mastra';
 import { slideWindow } from '~/lib/rate-limit.server';
 import { AGENT_ID, isAgentChat } from '~/lib/surface';
 import { authMiddleware } from '~/middleware/auth';
@@ -23,8 +31,8 @@ import type { Route } from './+types/api-agent-chat';
 
 /**
  * One turn of a live agent chat: saves the signed-in person's message, then
- * streams the agent's reply (an AI SDK UI message stream, for `useChat`)
- * and saves it, tool calls and all, when it ends. Stop (or a closed tab)
+ * streams the agent's reply (Mastra's stream as an AI SDK UI message stream,
+ * for `useChat`) and saves it, tool calls and all, when it ends. Stop (or a closed tab)
  * cuts the turn short; what it had by then is still saved.
  */
 
@@ -113,16 +121,26 @@ export async function action({ request, context }: Route.ActionArgs) {
     // The model's turns start with the user: drop the agent's greeting.
     while (history[0]?.role === 'assistant') history.shift();
 
-    return createAgentUIStreamResponse({
-        agent: createSurfaceAgent(latest),
-        uiMessages: history,
+    const memory = await getWorkspaceMemory();
+    const result = await createSurfaceAgent(latest, memory).stream(history, {
+        // Mastra keeps no messages (they're the chat's); the thread is only
+        // where working memory is read and written, for the workspace.
+        ...(memory && {
+            memory: { thread: chatId, resource: WORKSPACE_RESOURCE_ID },
+        }),
         abortSignal: AbortSignal.any([
             request.signal,
             AbortSignal.timeout(TURN_TIMEOUT_MS),
         ]),
-        generateMessageId: generateId,
-        // Drain on the server, so onFinish runs even when the stream is cut.
-        consumeSseStream: consumeStream,
+    });
+
+    const stream = createUIMessageStream<SurfaceAgentUIMessage>({
+        execute: ({ writer }) => {
+            writer.merge(
+                toAISdkStream(result, { from: 'agent', version: 'v6' }),
+            );
+        },
+        generateId,
         onError: (error) => {
             log.exception('agent_chat_failed', error, { chatId });
             return 'The agent ran into a problem. Try again.';
@@ -146,5 +164,10 @@ export async function action({ request, context }: Route.ActionArgs) {
                 if (!(error instanceof SurfaceError)) throw error;
             }
         },
+    });
+    // Drain on the server, so onFinish runs even when the stream is cut.
+    return createUIMessageStreamResponse({
+        stream,
+        consumeSseStream: consumeStream,
     });
 }

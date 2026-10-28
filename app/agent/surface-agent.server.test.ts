@@ -135,10 +135,67 @@ describe('surfaceTools', () => {
         });
     });
 
-    it('never reaches cards on other surfaces', async () => {
-        expect(() =>
-            tools().read_card.execute!({ cardId: 'doc-brief' }, options),
-        ).toThrow(/another surface/);
+    it('reads other surfaces, saying where a card lives', async () => {
+        const brief = (await tools().read_card.execute!(
+            { cardId: 'doc-brief' },
+            options,
+        )) as unknown as {
+            id: string;
+            markdown: string;
+            surface: string;
+            space: string;
+        };
+        expect(brief).toMatchObject({
+            id: 'doc-brief',
+            surface: 'Atlas launch',
+            space: 'Product',
+        });
+        expect(brief.markdown).toContain('Timeline');
+
+        const own = (await tools().read_card.execute!(
+            { cardId: CHAT_ID },
+            options,
+        )) as Record<string, unknown>;
+        expect(own).not.toHaveProperty('surface');
+    });
+
+    it('lists spaces and other surfaces’ cards', async () => {
+        const { spaces } = (await tools().list_spaces.execute!(
+            {},
+            options,
+        )) as { spaces: { name: string; surfaces: { id: string }[] }[] };
+        expect(spaces.map(({ name }) => name)).toContain('Customers');
+        expect(spaces.flatMap(({ surfaces }) => surfaces)).toContainEqual(
+            expect.objectContaining({ id: 'northwind' }),
+        );
+
+        const { cards } = (await tools().list_cards.execute!(
+            { surfaceId: 'northwind' },
+            options,
+        )) as { cards: { id: string }[] };
+        expect(cards.map(({ id }) => id)).toEqual(['doc-northwind-plan']);
+    });
+
+    it('searches this surface, or everywhere when asked', async () => {
+        const here = (await tools().search.execute!(
+            { query: 'Northwind' },
+            options,
+        )) as { hits: unknown[] };
+        expect(here.hits).toEqual([]);
+
+        const everywhere = (await tools().search.execute!(
+            { query: 'Northwind', everywhere: true },
+            options,
+        )) as { hits: { id: string; surface?: string }[] };
+        expect(everywhere.hits).toContainEqual(
+            expect.objectContaining({
+                id: 'doc-northwind-plan',
+                surface: 'Northwind',
+            }),
+        );
+    });
+
+    it('never changes cards on other surfaces', () => {
         const before = allItems().length;
         expect(() =>
             tools().create_chart.execute!(
@@ -155,7 +212,14 @@ describe('surfaceTools', () => {
                 options,
             ),
         ).toThrow(/another surface/);
+        expect(() =>
+            tools().rename_card.execute!(
+                { cardId: 'doc-brief', title: 'Mine now' },
+                options,
+            ),
+        ).toThrow(/another surface/);
         expect(allItems()).toHaveLength(before);
+        expect(getItem('doc-brief').title).not.toBe('Mine now');
     });
 });
 

@@ -34,6 +34,7 @@ type Part = UIMessage['parts'][number];
 
 /** What each tool says while it runs, and once it's done. */
 const TOOL_LOOKS: Record<string, { doing: string; done: string }> = {
+    list_spaces: { doing: 'Looking over the workspace', done: 'Looked over' },
     list_cards: { doing: 'Looking over the surface', done: 'Looked over' },
     read_card: { doing: 'Reading', done: 'Read' },
     search: { doing: 'Searching', done: 'Searched' },
@@ -58,10 +59,22 @@ const TOOL_LOOKS: Record<string, { doing: string; done: string }> = {
     move_card: { doing: 'Moving a card', done: 'Moved' },
     rename_card: { doing: 'Renaming a card', done: 'Renamed' },
     set_card_color: { doing: 'Recoloring a card', done: 'Recolored' },
+    // Mastra's own tool for the workspace's working memory.
+    updateWorkingMemory: {
+        doing: 'Remembering',
+        done: 'Saved to workspace memory',
+    },
 };
 
 /** Tools that only look: shown as a quiet line, not a card. */
-const READ_TOOLS = new Set(['list_cards', 'read_card', 'search', 'get_layout']);
+const READ_TOOLS = new Set([
+    'list_spaces',
+    'list_cards',
+    'read_card',
+    'search',
+    'get_layout',
+    'updateWorkingMemory',
+]);
 
 const STARTERS = [
     'Draft a one-page launch plan for a new mobile app',
@@ -465,13 +478,15 @@ function ToolCard({ part }: { part: ToolPart }) {
     if (READ_TOOLS.has(name)) {
         const card = cardRefOf(output);
         const detail =
-            name === 'get_layout'
+            name === 'get_layout' || name === 'updateWorkingMemory'
                 ? ''
-                : name === 'list_cards'
-                  ? `${(output.cards as unknown[]).length} cards`
-                  : name === 'search'
-                    ? `“${String(input.query)}”`
-                    : card?.title;
+                : name === 'list_spaces'
+                  ? `${(output.spaces as unknown[]).length} spaces`
+                  : name === 'list_cards'
+                    ? `${(output.cards as unknown[]).length} cards`
+                    : name === 'search'
+                      ? `“${String(input.query)}”`
+                      : card?.title;
         return (
             <p className="text-muted-foreground flex items-center gap-1.5 px-1 text-xs">
                 <CheckIcon aria-hidden="true" className="size-3.5 shrink-0" />
