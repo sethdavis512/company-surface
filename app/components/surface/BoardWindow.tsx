@@ -192,6 +192,7 @@ const columnUnderIssue: CollisionDetection = ({
  */
 function usePendingIssues(board: BoardItem) {
     const fetchers = useFetchers();
+    const { meId } = useSurfacePeople();
     let issues = board.issues;
     for (const { formData, key } of fetchers) {
         if (formData?.get('boardId') !== board.id) continue;
@@ -214,7 +215,7 @@ function usePendingIssues(board: BoardItem) {
                     status: formData.get('status') as IssueStatus,
                     priority: 'none',
                     links: [],
-                    createdById: 'me',
+                    createdById: meId,
                     updatedAt: new Date().toISOString(),
                 },
             ];

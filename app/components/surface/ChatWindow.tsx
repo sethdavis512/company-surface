@@ -6,6 +6,7 @@ import { cx } from 'cva.config';
 import { Button } from '~/components/ui/button';
 import {
     isAgentChat,
+    MEMBER_ROLE,
     isAgentMade,
     type ChatItem,
     type ChatMessage,
@@ -48,7 +49,10 @@ export function ChatWindow({ data, selected }: NodeProps<ChatNode>) {
     const focused = use(FocusedItemContext) === chat.id;
     const { colorOf } = useWindowColors();
     const pullRequests = useSurfaceItems().pullRequestsFrom(chat.id);
-    const agentChat = isAgentChat(chat);
+    const agentChat = isAgentChat(
+        chat,
+        (id) => personById(id)?.role === MEMBER_ROLE,
+    );
     const liveAgent =
         useRouteLoaderData<typeof surfaceLoader>('routes/surface')
             ?.liveAgent === true && agentChat;
@@ -202,7 +206,7 @@ function PeopleChatThread({
                                 mine && 'flex-row-reverse',
                             )}
                         >
-                            {!mine && <Avatar person={author} size="sm" />}
+                            <Avatar person={author} size="sm" />
                             <div
                                 className={cx(
                                     'flex max-w-[min(78%,36rem)] flex-col gap-0.5',

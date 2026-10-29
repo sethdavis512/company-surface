@@ -632,16 +632,11 @@ test.describe('Surface', () => {
         await waitForHydration(page);
         await expect.poll(overlaps).toBe(true);
 
-        const reset = posted(page, 'reset-positions');
+        const arranged = posted(page, 'arrange');
         await page.getByRole('button', { name: 'Arrange' }).click();
         await expect.poll(overlaps).toBe(false);
-        // Back on the row with the chats, centered on it.
-        await expect(page.locator('[data-node-id="doc-brief"]')).toHaveCSS(
-            'transform',
-            /matrix\(1, 0, 0, 1, \d+, 50\)/,
-        );
-        // And Arrange forgets the saved spot, so it stays tidy on reload.
-        await reset;
+        // Arrange saves where it put everything, so a reload keeps it tidy.
+        await arranged;
         await page.reload();
         await waitForHydration(page);
         await expect.poll(overlaps).toBe(false);

@@ -2,11 +2,12 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import type { ToolExecutionOptions } from 'ai';
 import { AGENT_ID, isAgentChat, type ChatItem } from '~/lib/surface';
 import {
-    ME_ID,
     allItems,
     getItem,
     getSurfaceForUser,
+    isMember,
     postMessage,
+    rememberPerson,
     resetSurface,
 } from '~/models/surface.server';
 import type { SessionUser } from '~/context';
@@ -31,27 +32,43 @@ function chat(): ChatItem {
     return item;
 }
 
-beforeEach(() => resetSurface());
+const PAT = 'user-pat';
+const pat = {
+    id: PAT,
+    name: 'Pat Kim',
+    email: 'pat@example.test',
+} as SessionUser;
+
+beforeEach(() => {
+    resetSurface();
+    rememberPerson(pat);
+});
 
 describe('the playground', () => {
     it('is a space with one live agent chat', async () => {
-        const surface = await getSurfaceForUser(
-            { name: 'Pat' } as SessionUser,
-            SURFACE_ID,
-        );
+        const surface = await getSurfaceForUser(pat, SURFACE_ID);
         expect(surface?.space.name).toBe('Playground');
         expect(surface?.items.map((item) => item.id)).toEqual([CHAT_ID]);
-        expect(isAgentChat(chat())).toBe(true);
+        expect(isAgentChat(chat(), isMember)).toBe(true);
     });
 });
 
 describe('isAgentChat', () => {
-    it('is the agent with people from this side only', () => {
-        expect(isAgentChat({ participantIds: [ME_ID, AGENT_ID] })).toBe(true);
-        expect(isAgentChat({ participantIds: [ME_ID, 'maya'] })).toBe(false);
-        expect(isAgentChat({ participantIds: [AGENT_ID, 'dev', ME_ID] })).toBe(
+    it('is the agent with signed-in people only, never the mock cast', () => {
+        const members = new Set([PAT, 'user-sam']);
+        const isOne = (id: string) => members.has(id);
+        expect(isAgentChat({ participantIds: [PAT, AGENT_ID] }, isOne)).toBe(
+            true,
+        );
+        expect(
+            isAgentChat({ participantIds: [PAT, 'user-sam', AGENT_ID] }, isOne),
+        ).toBe(true);
+        expect(isAgentChat({ participantIds: [PAT, 'maya'] }, isOne)).toBe(
             false,
         );
+        expect(
+            isAgentChat({ participantIds: [AGENT_ID, 'dev', PAT] }, isOne),
+        ).toBe(false);
     });
 });
 
@@ -59,7 +76,7 @@ describe('postMessage for the live agent', () => {
     it('keeps the id it is given and leaves the reply to the agent', () => {
         postMessage({
             chatId: CHAT_ID,
-            authorId: ME_ID,
+            authorId: PAT,
             text: 'Hi',
             id: 'client-id',
             mockReply: false,
@@ -69,7 +86,7 @@ describe('postMessage for the live agent', () => {
         expect(() =>
             postMessage({
                 chatId: CHAT_ID,
-                authorId: ME_ID,
+                authorId: PAT,
                 text: 'Hi',
                 id: 'client-id',
             }),
@@ -86,10 +103,7 @@ describe('surfaceTools', () => {
         expect(made).toMatchObject({ kind: 'document', title: 'Launch plan' });
         const doc = getItem((made as { id: string }).id);
         expect(doc.surfaceId).toBe(SURFACE_ID);
-        const surface = await getSurfaceForUser(
-            { name: 'Pat' } as SessionUser,
-            SURFACE_ID,
-        );
+        const surface = await getSurfaceForUser(pat, SURFACE_ID);
         expect(surface?.relations).toContainEqual(
             expect.objectContaining({
                 from: CHAT_ID,
@@ -232,7 +246,7 @@ describe('chatHistory', () => {
     it("reads the agent's replies, tool calls and all, as the assistant", () => {
         postMessage({
             chatId: CHAT_ID,
-            authorId: ME_ID,
+            authorId: PAT,
             text: 'Chart it',
             mockReply: false,
         });
@@ -261,6 +275,11 @@ describe('chatHistory', () => {
             type: 'tool-create_chart',
         });
         expect(replyText(history[2]!)).toBe('Done.');
+        // People are named, since several can share one agent chat.
+        expect(history[1]?.parts[0]).toMatchObject({
+            type: 'text',
+            text: 'Pat Kim: Chart it',
+        });
     });
 });
 

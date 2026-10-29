@@ -8,9 +8,12 @@
  * - `itemEmbed`, a block of its own: a card for another item, in the flow
  *   of the document.
  *
+ * And `table`, a block of rows of cells, each cell a line of inline text
+ * (marks and `itemRef`s included).
+ *
  * Agents write Markdown, not Portable Text: `markdownToPortableText` turns
- * it into blocks, with `[text](item:<id>)` for an `itemRef` and a line of
- * just `![](item:<id>)` for an `itemEmbed`. `portableTextToMarkdown` goes
+ * it into blocks, with `[text](item:<id>)` for an `itemRef`, a line of
+ * just `![](item:<id>)` for an `itemEmbed`, and GitHub-style pipe tables. `portableTextToMarkdown` goes
  * back, so agents read documents the way they write them.
  */
 
@@ -52,9 +55,54 @@ export type ItemEmbedBlock = {
     itemId: string;
 };
 
-export type DocumentBlock = TextBlock | ItemEmbedBlock;
+/** One cell of a table: inline text, like a block's without a style. */
+export type TableCell = {
+    _key: string;
+    children: Span[];
+    markDefs: MarkDef[];
+};
+
+export type TableRow = { _key: string; cells: TableCell[] };
+
+export type TableBlock = {
+    _type: 'table';
+    _key: string;
+    /** The first row is the header (Markdown's `| --- |` line under it). */
+    headerRow: boolean;
+    rows: TableRow[];
+};
+
+export type DocumentBlock = TextBlock | ItemEmbedBlock | TableBlock;
 
 const keySchema = z.string().min(1).max(64);
+
+const spansSchema = z
+    .array(
+        z.object({
+            _type: z.literal('span'),
+            _key: keySchema,
+            text: z.string().max(20000),
+            marks: z.array(z.string().max(64)).default([]),
+        }),
+    )
+    .min(1);
+
+const markDefsSchema = z
+    .array(
+        z.discriminatedUnion('_type', [
+            z.object({
+                _type: z.literal('itemRef'),
+                _key: keySchema,
+                itemId: z.string().min(1),
+            }),
+            z.object({
+                _type: z.literal('link'),
+                _key: keySchema,
+                href: z.string().min(1).max(2000),
+            }),
+        ]),
+    )
+    .default([]);
 
 /**
  * What a document may hold, for content that comes from outside the
@@ -69,37 +117,36 @@ export const documentBlocksSchema = z
                 style: z.enum(TEXT_STYLES).default('normal'),
                 listItem: z.enum(LIST_ITEMS).optional(),
                 level: z.number().int().min(1).max(6).optional(),
-                children: z
-                    .array(
-                        z.object({
-                            _type: z.literal('span'),
-                            _key: keySchema,
-                            text: z.string().max(20000),
-                            marks: z.array(z.string().max(64)).default([]),
-                        }),
-                    )
-                    .min(1),
-                markDefs: z
-                    .array(
-                        z.discriminatedUnion('_type', [
-                            z.object({
-                                _type: z.literal('itemRef'),
-                                _key: keySchema,
-                                itemId: z.string().min(1),
-                            }),
-                            z.object({
-                                _type: z.literal('link'),
-                                _key: keySchema,
-                                href: z.string().min(1).max(2000),
-                            }),
-                        ]),
-                    )
-                    .default([]),
+                children: spansSchema,
+                markDefs: markDefsSchema,
             }),
             z.object({
                 _type: z.literal('itemEmbed'),
                 _key: keySchema,
                 itemId: z.string().min(1),
+            }),
+            z.object({
+                _type: z.literal('table'),
+                _key: keySchema,
+                headerRow: z.boolean().default(false),
+                rows: z
+                    .array(
+                        z.object({
+                            _key: keySchema,
+                            cells: z
+                                .array(
+                                    z.object({
+                                        _key: keySchema,
+                                        children: spansSchema,
+                                        markDefs: markDefsSchema,
+                                    }),
+                                )
+                                .min(1)
+                                .max(50),
+                        }),
+                    )
+                    .min(1)
+                    .max(500),
             }),
         ]),
     )
@@ -119,6 +166,27 @@ const EMBED_LINE = /^!\[[^\]]*\]\(item:([^)\s]+)\)$/;
 const HEADING = /^(#{1,3})\s+(.*)$/;
 const LIST_LINE = /^(\s*)([-*]|\d+[.)])\s+(.*)$/;
 const QUOTE = /^>\s?(.*)$/;
+const TABLE_LINE = /^\|.*\|$/;
+/** The line under a table's header: `| --- | :---: |`. */
+const TABLE_RULE = /^\|(\s*:?-+:?\s*\|)+$/;
+
+/** A table line's cells, split on pipes that aren't escaped. */
+function tableCells(line: string): string[] {
+    const inner = line.trim().slice(1, -1);
+    const cells: string[] = [];
+    let cell = '';
+    for (let i = 0; i < inner.length; i++) {
+        if (inner[i] === '\\' && inner[i + 1] === '|') {
+            cell += '\\|';
+            i += 1;
+        } else if (inner[i] === '|') {
+            cells.push(cell.trim());
+            cell = '';
+        } else cell += inner[i];
+    }
+    cells.push(cell.trim());
+    return cells;
+}
 
 /** Turns Markdown into document blocks. Unknown syntax stays as text. */
 export function markdownToPortableText(
@@ -128,6 +196,7 @@ export function markdownToPortableText(
     const blocks: DocumentBlock[] = [];
     let paragraph: string[] = [];
     let quote: string[] = [];
+    let table: string[] = [];
 
     function text(style: TextStyle, raw: string, list?: ListItem, level = 1) {
         const markDefs: MarkDef[] = [];
@@ -144,11 +213,46 @@ export function markdownToPortableText(
             markDefs,
         });
     }
+    function cell(raw: string): TableCell {
+        const markDefs: MarkDef[] = [];
+        const children = parseInline(raw, [], markDefs, key);
+        return {
+            _key: key(),
+            children:
+                children.length > 0
+                    ? children
+                    : [{ _type: 'span', _key: key(), text: '', marks: [] }],
+            markDefs,
+        };
+    }
+    function flushTable() {
+        const lines = table;
+        table = [];
+        if (lines.length === 0) return;
+        const headerRow = lines.length > 1 && TABLE_RULE.test(lines[1]!);
+        const rows = lines
+            .filter((_, index) => !(headerRow && index === 1))
+            .map(tableCells);
+        // Every row as wide as the widest, so the columns line up.
+        const width = Math.max(...rows.map((row) => row.length));
+        blocks.push({
+            _type: 'table',
+            _key: key(),
+            headerRow,
+            rows: rows.map((cells) => ({
+                _key: key(),
+                cells: Array.from({ length: width }, (_, index) =>
+                    cell(cells[index] ?? ''),
+                ),
+            })),
+        });
+    }
     function flush() {
         if (paragraph.length > 0) text('normal', paragraph.join(' '));
         if (quote.length > 0) text('blockquote', quote.join(' '));
         paragraph = [];
         quote = [];
+        flushTable();
     }
 
     for (const line of markdown.replace(/\r\n?/g, '\n').split('\n')) {
@@ -157,6 +261,12 @@ export function markdownToPortableText(
             flush();
             continue;
         }
+        if (TABLE_LINE.test(trimmed)) {
+            if (table.length === 0) flush();
+            table.push(trimmed);
+            continue;
+        }
+        flushTable();
         const embed = EMBED_LINE.exec(trimmed);
         if (embed) {
             flush();
@@ -317,6 +427,26 @@ export function portableTextToMarkdown(blocks: DocumentBlock[]): string {
             lines.push(`![](${ITEM_PREFIX}${block.itemId})`);
             continue;
         }
+        if (block._type === 'table') {
+            const row = (cells: TableCell[]) =>
+                `| ${cells
+                    .map((cell) =>
+                        cell.children
+                            .map((span) => spanMarkdown(span, cell.markDefs))
+                            .join('')
+                            .replace(/(?<!\\)\|/g, '\\|'),
+                    )
+                    .join(' | ')} |`;
+            block.rows.forEach((tableRow, index) => {
+                lines.push(row(tableRow.cells));
+                if (index === 0 && block.headerRow) {
+                    lines.push(
+                        `| ${tableRow.cells.map(() => '---').join(' | ')} |`,
+                    );
+                }
+            });
+            continue;
+        }
         const body = block.children
             .map((span) => spanMarkdown(span, block.markDefs))
             .join('');
@@ -355,16 +485,26 @@ function spanMarkdown(span: Span, markDefs: MarkDef[]): string {
     return text;
 }
 
+/** A table cell's text, without marks. */
+export function cellText(cell: TableCell): string {
+    return cell.children.map((span) => span.text).join('');
+}
+
 /** Every item a document points at, through `itemRef`s or `itemEmbed`s. */
 export function referencedItemIds(blocks: DocumentBlock[]): string[] {
     const ids = new Set<string>();
+    const fromMarks = (markDefs: MarkDef[]) => {
+        for (const def of markDefs) {
+            if (def._type === 'itemRef') ids.add(def.itemId);
+        }
+    };
     for (const block of blocks) {
         if (block._type === 'itemEmbed') ids.add(block.itemId);
-        else {
-            for (const def of block.markDefs) {
-                if (def._type === 'itemRef') ids.add(def.itemId);
+        else if (block._type === 'table') {
+            for (const row of block.rows) {
+                for (const cell of row.cells) fromMarks(cell.markDefs);
             }
-        }
+        } else fromMarks(block.markDefs);
     }
     return [...ids];
 }

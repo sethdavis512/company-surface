@@ -36,9 +36,11 @@ import {
 } from '@sethdavis512/trellis';
 import { ArrowLeftIcon, LayoutGridIcon } from 'lucide-react';
 import { cx } from 'cva.config';
+import { clusterLayout } from '~/lib/arrange';
 import { createSurfaceSearch } from '~/lib/search';
 import { CanvasMenu } from './CanvasMenu';
 import { AddCardMenu } from './AddCardMenu';
+import { PresenceAvatars } from './PresenceAvatars';
 import { Button } from '~/components/ui/button';
 import {
     sizeOf,
@@ -53,6 +55,7 @@ import {
     restack,
     type CardSize,
     type Insets,
+    type Person,
     type PullRequestItem,
     type Surface,
     type SurfaceItem,
@@ -585,10 +588,11 @@ function useCardResizing(
 }
 
 /**
- * Arrange: slides every window back into the canvas's tidy layout (chats in
- * a row, then documents, each pull request under its chat; see
- * `placeWindows`) at its resting size, fits the view to all of it, and
- * clears saved positions (a fresh load uses the same layout).
+ * Arrange: slides every window into the layout by links (`clusterLayout`:
+ * linked cards grouped around their hub, groups packed in rows) at its
+ * resting size, fits the view to all of it, and saves the spots (the
+ * `arrange` intent), so everyone's canvas slides there too and a reload
+ * keeps it.
  */
 function useArrange(
     surface: Surface,
@@ -621,37 +625,43 @@ function useArrange(
     }
 
     const arrange = useCallback(() => {
-        const spots = new Map(
-            placeWindows(surface.items).map((spot) => [spot.id, spot]),
-        );
+        // Locked cards (and what hangs under them) get no spot: they stay.
+        const spots = clusterLayout(surface.items, surface.relations, {
+            locked,
+        });
         setNodes((all) =>
             all.map((node) => {
-                // Locked cards stay where they were pinned.
-                const spot = locked.has(node.id)
-                    ? undefined
-                    : spots.get(node.id);
+                const spot = spots[node.id];
                 return spot
                     ? {
                           ...node,
                           position: { x: spot.x, y: spot.y },
-                          width: spot.width,
-                          height: spot.height,
+                          ...sizeOf(node.data.item),
                       }
                     : node;
             }),
         );
         setArranging(true);
-        // The tidy layout is what a fresh load uses, so forget moved windows.
+        // Saving bumps `layoutVersion`; this canvas is already there.
+        setSeenLayout(layoutVersion + 1);
         void submit(
-            { intent: 'reset-positions' },
+            { intent: 'arrange' },
             {
                 method: 'post',
                 action: links.action,
                 navigate: false,
-                fetcherKey: 'reset-positions',
+                fetcherKey: 'arrange',
             },
         );
-    }, [surface.items, setNodes, submit, links.action, locked]);
+    }, [
+        surface.items,
+        surface.relations,
+        setNodes,
+        submit,
+        links.action,
+        locked,
+        layoutVersion,
+    ]);
 
     // After the new positions reach the canvas: fit, then stop animating
     // moves, so dragging stays immediate.
@@ -675,6 +685,8 @@ type Props = {
     visitKey: string;
     /** Opens the ⌘K palette (from the canvas's right-click menu). */
     onSearch: () => void;
+    /** Everyone viewing the surface right now, you included. */
+    present: Person[];
 };
 
 export function SurfaceCanvas({
@@ -683,6 +695,7 @@ export function SurfaceCanvas({
     view,
     visitKey,
     onSearch,
+    present,
 }: Props) {
     const links = useSurfaceLinks();
     const navigate = useNavigate();
@@ -1043,9 +1056,10 @@ export function SurfaceCanvas({
                                                         <Panel
                                                             position="top-left"
                                                             // The whole top row: Add pinned
-                                                            // left, the filters centered in the
-                                                            // rest, never overlapping. Clicks
-                                                            // pass through the gaps to the canvas.
+                                                            // left, who's here pinned right, the
+                                                            // filters centered between, never
+                                                            // overlapping. Clicks pass through
+                                                            // the gaps to the canvas.
                                                             style={{ right: 0 }}
                                                             className="pointer-events-none flex items-start gap-2"
                                                         >
@@ -1076,6 +1090,23 @@ export function SurfaceCanvas({
                                                                     }
                                                                 />
                                                             </div>
+                                                            <PresenceAvatars
+                                                                people={present}
+                                                                meId={
+                                                                    surface.meId
+                                                                }
+                                                                className="shrink-0"
+                                                            />
+                                                        </Panel>
+                                                    )}
+                                                    {isFocused && (
+                                                        <Panel position="top-right">
+                                                            <PresenceAvatars
+                                                                people={present}
+                                                                meId={
+                                                                    surface.meId
+                                                                }
+                                                            />
                                                         </Panel>
                                                     )}
                                                     {isFocused && (

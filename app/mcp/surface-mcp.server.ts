@@ -58,6 +58,7 @@ import {
     getItem,
     linkItems,
     listItems,
+    listLinks,
     listPeople,
     listViews,
     openPullRequest,
@@ -79,7 +80,7 @@ const markdownSchema = z
     .string()
     .max(20000)
     .describe(
-        'Document content as Markdown: paragraphs, ## and ### headings, - and 1. lists, > quotes, **bold**, *italic*, `code`, and [text](https://...) links. Point at other items with [text](item:<itemId>), or put a card for one on a line of its own with ![](item:<itemId>). Item ids come from list_items.',
+        'Document content as Markdown: paragraphs, ## and ### headings, - and 1. lists, > quotes, | pipe | tables | (a `| --- |` line under the header row), **bold**, *italic*, `code`, and [text](https://...) links. Point at other items with [text](item:<itemId>), or put a card for one on a line of its own with ![](item:<itemId>). Item ids come from list_items.',
     );
 
 /** A document as agents read it: Markdown instead of Portable Text blocks. */
@@ -304,7 +305,7 @@ export function createSurfaceMcpServer(): McpServer {
         {
             title: 'List people',
             description:
-                'Everyone who can be in a chat or author a document, by id. "me" is whoever is signed in to the app.',
+                'Everyone who can be in a chat or author a document, by id: the people who have signed in to the app (role "Member"), then the rest of the team and the agent.',
             inputSchema: {},
             annotations: { readOnlyHint: true },
         },
@@ -324,7 +325,7 @@ export function createSurfaceMcpServer(): McpServer {
                     .array(z.string())
                     .optional()
                     .describe(
-                        `Person ids (see list_people). Defaults to ["me", "${AGENT_ID}"].`,
+                        `Person ids (see list_people). The author and "${AGENT_ID}" are always in it.`,
                     ),
                 firstMessage: z.string().min(1).max(4000).optional(),
                 authorId: authorSchema,
@@ -405,7 +406,7 @@ export function createSurfaceMcpServer(): McpServer {
         {
             title: 'Relate two cards',
             description:
-                'Draws a labeled relation between two cards on the surface, from one to the other (for example "discusses" or "references").',
+                'Draws a labeled relation between two cards on the surface, from one to the other (for example "discusses" or "references"). See the links already there with list_links; remove one with unlink_cards.',
             inputSchema: {
                 from: z.string(),
                 to: z.string(),
@@ -814,11 +815,23 @@ export function createSurfaceMcpServer(): McpServer {
     );
 
     server.registerTool(
+        'list_links',
+        {
+            title: 'List links',
+            description:
+                'Every link (line on the canvas) between cards on a surface: its id, the cards it runs from and to (with their titles), and its label. Remove links with unlink_cards.',
+            inputSchema: { surfaceId: surfaceIdSchema },
+            annotations: { readOnlyHint: true },
+        },
+        ({ surfaceId }) => run(() => listLinks(surfaceId)),
+    );
+
+    server.registerTool(
         'unlink_cards',
         {
             title: 'Unrelate two cards',
             description:
-                'Removes the links (lines on the canvas) between two cards, either way round. People can also drag links between cards and remove them by right-clicking.',
+                'Removes the links (lines on the canvas) between two cards, either way round. To remove several, find them with list_links and call this once per pair. People can also drag links between cards and remove them by right-clicking.',
             inputSchema: { from: z.string(), to: z.string() },
         },
         (input) => run(() => ({ removed: unlinkCards(input) })),

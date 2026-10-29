@@ -21,11 +21,13 @@ import { WORKSPACE_RESOURCE_ID, getWorkspaceMemory } from '~/mastra';
 import { slideWindow } from '~/lib/rate-limit.server';
 import { AGENT_ID, isAgentChat } from '~/lib/surface';
 import { authMiddleware } from '~/middleware/auth';
+import { markChanged } from '~/models/surface-events.server';
 import {
-    ME_ID,
     SurfaceError,
     getItem,
+    isMember,
     postMessage,
+    rememberPerson,
     setAwaitingReply,
 } from '~/models/surface.server';
 import type { Route } from './+types/api-agent-chat';
@@ -70,6 +72,7 @@ const TURN_TIMEOUT_MS = 180_000;
 
 export async function action({ request, context }: Route.ActionArgs) {
     const user = requireUserFromContext(context);
+    const me = rememberPerson(user);
     if (request.method !== 'POST') {
         throw data('Method not allowed', { status: 405 });
     }
@@ -96,7 +99,7 @@ export async function action({ request, context }: Route.ActionArgs) {
         }
         throw error;
     }
-    if (chat.kind !== 'chat' || !isAgentChat(chat)) {
+    if (chat.kind !== 'chat' || !isAgentChat(chat, isMember)) {
         throw data('Only chats with the agent alone get live replies.', {
             status: 400,
         });
@@ -105,7 +108,7 @@ export async function action({ request, context }: Route.ActionArgs) {
     try {
         postMessage({
             chatId,
-            authorId: ME_ID,
+            authorId: me.id,
             text: message.text,
             id: message.id,
             mockReply: false,
@@ -115,6 +118,8 @@ export async function action({ request, context }: Route.ActionArgs) {
         if (!(error instanceof SurfaceError)) throw error;
     }
     setAwaitingReply(chatId, true);
+    // Everyone else on the surface sees the message and the agent typing.
+    markChanged();
 
     const latest = getItem(chatId);
     if (latest.kind !== 'chat') throw data('Not a chat', { status: 400 });
@@ -167,6 +172,7 @@ export async function action({ request, context }: Route.ActionArgs) {
         onFinish: ({ responseMessage }) => {
             try {
                 setAwaitingReply(chatId, false);
+                markChanged();
                 const said = responseMessage.parts.some(
                     (part) => part.type !== 'step-start',
                 );

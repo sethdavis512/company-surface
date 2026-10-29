@@ -1,6 +1,7 @@
 import invariant from 'tiny-invariant';
 import { describe, expect, it } from 'vitest';
 import {
+    cellText,
     documentBlocksSchema,
     markdownToPortableText,
     portableTextToMarkdown,
@@ -88,6 +89,68 @@ describe('markdownToPortableText', () => {
                 key: counter(),
             }).map((block) => block._type),
         ).toEqual(['block', 'itemEmbed', 'block']);
+    });
+});
+
+describe('tables', () => {
+    const markdown = [
+        'The notes:',
+        '| Note | Color | Purpose |',
+        '| --- | :---: | --- |',
+        '| [Sticky note 1](item:note-1) | **Amber** | A first idea |',
+        '| Sticky note 2 | Sky | Pipes \\| stay put |',
+        'After the table.',
+    ].join('\n');
+
+    it('reads a pipe table, header row and all, between paragraphs', () => {
+        const blocks = markdownToPortableText(markdown, { key: counter() });
+        expect(blocks.map((block) => block._type)).toEqual([
+            'block',
+            'table',
+            'block',
+        ]);
+        const table = blocks[1];
+        invariant(table?._type === 'table');
+        expect(table.headerRow).toBe(true);
+        expect(table.rows.map((row) => row.cells.map(cellText))).toEqual([
+            ['Note', 'Color', 'Purpose'],
+            ['Sticky note 1', 'Amber', 'A first idea'],
+            ['Sticky note 2', 'Sky', 'Pipes | stay put'],
+        ]);
+        // Cells keep marks and item references.
+        const [ref] = table.rows[1]!.cells;
+        expect(ref!.markDefs).toEqual([
+            { _type: 'itemRef', _key: expect.any(String), itemId: 'note-1' },
+        ]);
+        expect(table.rows[1]!.cells[1]!.children[0]!.marks).toEqual(['strong']);
+        expect(referencedItemIds(blocks)).toEqual(['note-1']);
+    });
+
+    it('pads short rows, and reads a table with no header', () => {
+        const [table] = markdownToPortableText('| a | b |\n| c |');
+        invariant(table?._type === 'table');
+        expect(table.headerRow).toBe(false);
+        expect(table.rows.map((row) => row.cells.map(cellText))).toEqual([
+            ['a', 'b'],
+            ['c', ''],
+        ]);
+    });
+
+    it('writes tables back as Markdown', () => {
+        const blocks = markdownToPortableText(markdown);
+        expect(portableTextToMarkdown(blocks)).toBe(
+            [
+                'The notes:',
+                '',
+                '| Note | Color | Purpose |',
+                '| --- | --- | --- |',
+                '| [Sticky note 1](item:note-1) | **Amber** | A first idea |',
+                '| Sticky note 2 | Sky | Pipes \\| stay put |',
+                '',
+                'After the table.',
+            ].join('\n'),
+        );
+        expect(documentBlocksSchema.parse(blocks)).toEqual(blocks);
     });
 });
 

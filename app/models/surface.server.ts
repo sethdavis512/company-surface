@@ -1,7 +1,9 @@
+import { createHash } from 'node:crypto';
 import type { SessionUser } from '~/context';
 import { MOCK_REPLY_DELAY_MS, pickMockReply } from '~/lib/mock-chat';
 import {
     arrangeGroups,
+    clusterLayout,
     currentLayout,
     topLeftOf,
     type ArrangeDirection,
@@ -11,6 +13,7 @@ import {
     launchRetroSurface,
     type SeedSurface,
 } from './seed-surfaces.server';
+import { markChanged } from './surface-events.server';
 import {
     markdownToPortableText,
     referencedItemIds,
@@ -19,6 +22,7 @@ import {
 import {
     AGENT_ID,
     isAgentChat,
+    MEMBER_ROLE,
     frameItems,
     isGifUrl,
     noteTitle,
@@ -73,12 +77,16 @@ import {
  * `Surface` shape.
  */
 
-/** The signed-in person. The mock is single-player: whoever is signed in is "me". */
-export const ME_ID = 'me';
 /** Who agents write as, unless they name someone else. */
 export { AGENT_ID };
 
+/**
+ * The seeded cast. Signed-in people join them as `members` (by their user
+ * id) the first time they open a surface; replies from the mock chat
+ * service only ever come from this cast, never from a real person.
+ */
 const PEOPLE: Person[] = [
+    { id: 'jordan', name: 'Jordan Lee', initials: 'JL', role: 'Launch Lead' },
     { id: 'maya', name: 'Maya Chen', initials: 'MC', role: 'Head of Product' },
     { id: 'dev', name: 'Dev Patel', initials: 'DP', role: 'Engineering Lead' },
     {
@@ -107,6 +115,8 @@ type Store = {
     items: SurfaceItem[];
     relations: Relation[];
     views: SavedView[];
+    /** Everyone who has signed in and opened a surface, by user id. */
+    members: Person[];
 };
 
 /** A card before it's put on a surface. */
@@ -126,7 +136,8 @@ function playground(): {
         id: 'chat-agent',
         surfaceId: 'agent-test-drive',
         title: 'Ask the agent',
-        participantIds: [ME_ID, AGENT_ID],
+        // Whoever writes first joins.
+        participantIds: [AGENT_ID],
         messages: [
             {
                 id: 'msg-agent-hello',
@@ -194,6 +205,7 @@ Northwind runs **240 seats** across three regions and renews in March.
         colors: seedSurface.colors,
     });
     return {
+        members: [],
         spaces: [
             {
                 id: 'product',
@@ -333,7 +345,7 @@ function seedContent(): {
                 id: 'chat-launch',
                 title: 'Launch crew',
                 createdById: 'maya',
-                participantIds: ['me', 'maya', 'dev'],
+                participantIds: ['jordan', 'maya', 'dev'],
                 messages: [
                     {
                         id: 'm1',
@@ -349,7 +361,7 @@ function seedContent(): {
                     },
                     {
                         id: 'm3',
-                        authorId: 'me',
+                        authorId: 'jordan',
                         text: "Let's call the 6th the freeze and note it in the brief.",
                         sentAt: '2026-10-23T09:14:00Z',
                     },
@@ -366,7 +378,7 @@ function seedContent(): {
                 id: 'chat-customers',
                 title: 'Rosa Alvarez',
                 createdById: 'rosa',
-                participantIds: ['me', 'rosa'],
+                participantIds: ['jordan', 'rosa'],
                 messages: [
                     {
                         id: 'c1',
@@ -376,7 +388,7 @@ function seedContent(): {
                     },
                     {
                         id: 'c2',
-                        authorId: 'me',
+                        authorId: 'jordan',
                         text: "It's in the brief as a fast follow, not day one.",
                         sentAt: '2026-10-23T10:24:00Z',
                     },
@@ -729,6 +741,8 @@ function store(): Store {
         scope[STORE_KEY] = seed();
     }
     const current = scope[STORE_KEY];
+    // Stores from before real people (kept across dev reloads).
+    current.members ??= [];
     // Stores from before locking (kept across dev reloads).
     for (const surface of current.surfaces) surface.arrangement.locked ??= [];
     // Stores from before shapes were removed: their shape cards go.
@@ -908,23 +922,39 @@ function requireReferencesOn(surfaceId: string, blocks: DocumentBlock[]) {
 }
 
 function requireKnownPeople(ids: string[]) {
-    const known = new Set([ME_ID, ...PEOPLE.map((person) => person.id)]);
+    const known = new Set(listPeople().map((person) => person.id));
     const unknown = ids.filter((id) => !known.has(id));
     if (unknown.length > 0) {
         throw new SurfaceError(`Unknown people: ${unknown.join(', ')}.`);
     }
 }
 
+export function isMember(id: string) {
+    return store().members.some((member) => member.id === id);
+}
+
+/**
+ * The signed-in user as a person on the surface, added to `members` the
+ * first time (and renamed when their name changes).
+ */
+export function rememberPerson(user: SessionUser): Person {
+    const name = user.name || user.email;
+    const person: Person = {
+        id: user.id,
+        name,
+        initials: initialsOf(name),
+        role: MEMBER_ROLE,
+    };
+    const { members } = store();
+    const index = members.findIndex((member) => member.id === user.id);
+    if (index === -1) members.push(person);
+    else members[index] = person;
+    return structuredClone(person);
+}
+
+/** Everyone: signed-in members, then the seeded cast and the agent. */
 export function listPeople(): Person[] {
-    return [
-        {
-            id: ME_ID,
-            name: 'The signed-in person',
-            initials: 'ME',
-            role: 'You',
-        },
-        ...PEOPLE,
-    ];
+    return structuredClone([...store().members, ...PEOPLE]);
 }
 
 /** Every space and its surfaces, in order, with what's on each. */
@@ -961,13 +991,7 @@ export async function getSurfaceForUser(
         (candidate) => candidate.id === surfaceId,
     );
     if (!record) return null;
-    const name = user.name || user.email;
-    const me: Person = {
-        id: ME_ID,
-        name,
-        initials: initialsOf(name),
-        role: 'You',
-    };
+    const me = rememberPerson(user);
     const items = store().items.filter((item) => item.surfaceId === surfaceId);
     const ids = new Set(items.map((item) => item.id));
 
@@ -979,7 +1003,7 @@ export async function getSurfaceForUser(
         space: requireSpace(record.spaceId),
         workspace: getWorkspace(),
         meId: me.id,
-        people: [me, ...PEOPLE],
+        people: [me, ...listPeople().filter((person) => person.id !== me.id)],
         items,
         relations: store().relations.filter(
             (relation) => ids.has(relation.from) && ids.has(relation.to),
@@ -987,6 +1011,31 @@ export async function getSurfaceForUser(
         arrangement: record.arrangement,
         views: store().views.filter((view) => view.surfaceId === surfaceId),
     });
+}
+
+/**
+ * A fingerprint of what's on a surface (the same for every viewer), or null
+ * for no such surface. The page keeps the one it loaded and reloads when
+ * the event stream sends another. Only this surface counts: new surfaces
+ * elsewhere (the switcher's list) and people signing in show with the next
+ * reload, rather than reloading every open surface at once.
+ */
+export function surfaceVersion(surfaceId: string): string | null {
+    const { surfaces, items, relations, views } = store();
+    const record = surfaces.find((candidate) => candidate.id === surfaceId);
+    if (!record) return null;
+    const cards = items.filter((item) => item.surfaceId === surfaceId);
+    const ids = new Set(cards.map((item) => item.id));
+    const shared = JSON.stringify([
+        record,
+        requireSpace(record.spaceId),
+        cards,
+        relations.filter(
+            (relation) => ids.has(relation.from) && ids.has(relation.to),
+        ),
+        views.filter((view) => view.surfaceId === surfaceId),
+    ]);
+    return createHash('sha1').update(shared).digest('base64url').slice(0, 16);
 }
 
 /** A card on this surface, or null. */
@@ -1063,7 +1112,7 @@ export function getItem(itemId: string): SurfaceItem {
 export function createChat({
     surfaceId,
     title,
-    participantIds = [ME_ID, AGENT_ID],
+    participantIds = [AGENT_ID],
     firstMessage,
     authorId = AGENT_ID,
 }: {
@@ -1134,13 +1183,25 @@ export function postMessage({
         chat.participantIds.push(authorId);
     }
 
-    if (authorId === ME_ID && mockReply && !isAgentChat(chat)) {
+    // Only the seeded cast and the agent answer: a real person's words are
+    // never made up for them.
+    const repliers = chat.participantIds.filter((id) => !isMember(id));
+    if (
+        isMember(authorId) &&
+        mockReply &&
+        !isAgentChat(chat, isMember) &&
+        repliers.length > 0
+    ) {
         chat.awaitingReply = true;
         setTimeout(() => {
             chat.messages.push(
-                pickMockReply(chat, { meId: ME_ID, exclude: [AGENT_ID] }),
+                pickMockReply(
+                    { participantIds: repliers },
+                    { meId: authorId, exclude: [AGENT_ID] },
+                ),
             );
             chat.awaitingReply = false;
+            markChanged();
         }, MOCK_REPLY_DELAY_MS);
     }
     return structuredClone(message);
@@ -1215,7 +1276,7 @@ export function updateDocument({
     documentId,
     blocks,
     baseUpdatedAt,
-    authorId = ME_ID,
+    authorId = AGENT_ID,
 }: {
     documentId: string;
     blocks: DocumentBlock[];
@@ -1271,6 +1332,25 @@ export function unlinkItems(relationId: string) {
 }
 
 /** Removes every link between two cards, either way round; how many went. */
+/** The links between cards on a surface, each with both cards' titles. */
+export function listLinks(surfaceId: string) {
+    requireSurface(surfaceId);
+    const titles = new Map(
+        store()
+            .items.filter((item) => item.surfaceId === surfaceId)
+            .map((item) => [item.id, item.title]),
+    );
+    return store()
+        .relations.filter(
+            (relation) => titles.has(relation.from) && titles.has(relation.to),
+        )
+        .map((relation) => ({
+            ...relation,
+            fromTitle: titles.get(relation.from)!,
+            toTitle: titles.get(relation.to)!,
+        }));
+}
+
 export function unlinkCards({ from, to }: { from: string; to: string }) {
     requireItem(from);
     requireItem(to);
@@ -1654,7 +1734,7 @@ export function createImage({
  */
 export function duplicateItem({
     itemId,
-    authorId = ME_ID,
+    authorId = AGENT_ID,
     position,
 }: {
     itemId: string;
@@ -1721,7 +1801,7 @@ export function addCard({
     url,
     attachedTo,
     position,
-    authorId = ME_ID,
+    authorId = AGENT_ID,
 }: {
     surfaceId: string;
     kind: SurfaceItemKind;
@@ -2346,6 +2426,28 @@ export function moveCard({
     }
     arrangement.layoutVersion = (arrangement.layoutVersion ?? 0) + 1;
     return { id: item.id, kind: item.kind, title: item.title, x, y };
+}
+
+/**
+ * Arrange: lays the surface out by links (`clusterLayout`: each cluster of
+ * linked cards a block around its hub, blocks packed in rows) and saves
+ * every new spot, so the layout is shared and survives reloads. Open
+ * canvases slide to it (`layoutVersion`). Locked cards stay put.
+ */
+export function arrangeByLinks(surfaceId: string) {
+    const { arrangement } = requireSurface(surfaceId);
+    const items = store().items.filter((item) => item.surfaceId === surfaceId);
+    const ids = new Set(items.map((item) => item.id));
+    const positions = clusterLayout(
+        items,
+        store().relations.filter(
+            (relation) => ids.has(relation.from) && ids.has(relation.to),
+        ),
+        { locked: new Set(arrangement.locked) },
+    );
+    arrangement.positions = { ...arrangement.positions, ...positions };
+    arrangement.layoutVersion = (arrangement.layoutVersion ?? 0) + 1;
+    return positions;
 }
 
 /** Forgets moved windows, except locked ones, which stay put. */

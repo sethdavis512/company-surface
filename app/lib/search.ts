@@ -1,5 +1,5 @@
 import MiniSearch from 'minisearch';
-import type { DocumentBlock } from './portable-text';
+import { cellText, type DocumentBlock } from './portable-text';
 import type { SurfaceItem, SurfaceItemKind } from './surface';
 
 /**
@@ -67,11 +67,15 @@ const SNIPPET_LENGTH = 120;
 
 function blocksText(blocks: DocumentBlock[]): string {
     return blocks
-        .flatMap((block) =>
-            block._type === 'block'
-                ? [block.children.map((span) => span.text).join('')]
-                : [],
-        )
+        .flatMap((block) => {
+            if (block._type === 'block') {
+                return [block.children.map((span) => span.text).join('')];
+            }
+            if (block._type === 'table') {
+                return block.rows.flatMap((row) => row.cells.map(cellText));
+            }
+            return [];
+        })
         .join(' ');
 }
 

@@ -54,6 +54,7 @@ import {
     setItemColor,
     updateIssue,
 } from '~/models/surface.server';
+import { markChanged } from '~/models/surface-events.server';
 
 /**
  * The live agent behind agent chats (`isAgentChat`): Claude, run by Mastra,
@@ -85,7 +86,7 @@ const markdownSchema = z
     .string()
     .max(20000)
     .describe(
-        'Markdown: paragraphs, ## and ### headings, - and 1. lists, > quotes, **bold**, *italic*, `code`, [text](https://...) links. Point at another card with [text](item:<cardId>), or put a card for one on a line of its own with ![](item:<cardId>).',
+        'Markdown: paragraphs, ## and ### headings, - and 1. lists, > quotes, | pipe | tables | (a `| --- |` line under the header row), **bold**, *italic*, `code`, [text](https://...) links. Point at another card with [text](item:<cardId>), or put a card for one on a line of its own with ![](item:<cardId>).',
     );
 
 /** Where a card lives, for cards found outside this surface. */
@@ -570,8 +571,18 @@ function asMastraTools(tools: Record<string, Tool>) {
                 inputSchema: aiTool.inputSchema as z.ZodType<
                     Record<string, unknown>
                 >,
-                execute: async (input) =>
-                    aiTool.execute!(input, { toolCallId: name, messages: [] }),
+                execute: async (input) => {
+                    try {
+                        return await aiTool.execute!(input, {
+                            toolCallId: name,
+                            messages: [],
+                        });
+                    } finally {
+                        // Cards it made or moved reach every open canvas
+                        // as it goes, not only when the turn ends.
+                        markChanged();
+                    }
+                },
             }),
         ]),
     );
@@ -607,8 +618,8 @@ export type SurfaceAgentUIMessage = UIMessage<
 
 /**
  * The chat so far as the agent reads it: its own replies (with their tool
- * calls) as the assistant, everyone else as the user, named when it isn't
- * the signed-in person.
+ * calls) as the assistant, everyone else as the user, each line named,
+ * since several people can share one agent chat.
  */
 export function chatHistory(chat: ChatItem): UIMessage[] {
     const names = new Map(
@@ -629,10 +640,7 @@ export function chatHistory(chat: ChatItem): UIMessage[] {
                   parts: [
                       {
                           type: 'text',
-                          text:
-                              message.authorId === 'me'
-                                  ? message.text
-                                  : `${names.get(message.authorId) ?? message.authorId}: ${message.text}`,
+                          text: `${names.get(message.authorId) ?? message.authorId}: ${message.text}`,
                       },
                   ],
               },

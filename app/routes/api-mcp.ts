@@ -2,6 +2,7 @@ import { timingSafeEqual } from 'node:crypto';
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
 import { env } from '~/lib/env.server';
 import { createSurfaceMcpServer } from '~/mcp/surface-mcp.server';
+import { markChanged } from '~/models/surface-events.server';
 import type { Route } from './+types/api-mcp';
 
 /**
@@ -47,7 +48,12 @@ async function handle(request: Request): Promise<Response> {
         enableJsonResponse: true,
     });
     await server.connect(transport);
-    return transport.handleRequest(request);
+    try {
+        return await transport.handleRequest(request);
+    } finally {
+        // Whatever the tool wrote, open surfaces hear about it.
+        markChanged();
+    }
 }
 
 export async function loader({ request }: Route.LoaderArgs) {

@@ -394,15 +394,22 @@ export function isAgentMade(item: { createdById: string }): boolean {
 }
 
 /**
- * A chat between people and the agent alone: when chat is live (an
+ * A chat between signed-in people (`isMember`) and the agent alone, with
+ * none of the mock cast: when chat is live (an
  * Anthropic key is set), the agent answers it for real and can make cards.
  */
-export function isAgentChat(chat: Pick<ChatItem, 'participantIds'>): boolean {
+export function isAgentChat(
+    chat: Pick<ChatItem, 'participantIds'>,
+    isMember: (id: string) => boolean,
+): boolean {
     return (
         chat.participantIds.includes(AGENT_ID) &&
-        chat.participantIds.every((id) => id === AGENT_ID || id === 'me')
+        chat.participantIds.every((id) => id === AGENT_ID || isMember(id))
     );
 }
+
+/** The role of people who sign in (the rest of the cast is mock). */
+export const MEMBER_ROLE = 'Member';
 
 /**
  * The item a window hangs under on the canvas: a pull request's chat, a

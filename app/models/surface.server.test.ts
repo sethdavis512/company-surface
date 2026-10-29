@@ -6,8 +6,11 @@ import { MOCK_REPLY_DELAY_MS } from '~/lib/mock-chat';
 import { markdownToPortableText } from '~/lib/portable-text';
 import {
     AGENT_ID,
-    ME_ID,
     SurfaceError,
+    listLinks,
+    listPeople,
+    rememberPerson,
+    surfaceVersion,
     appendToDocument,
     createChat,
     createChart,
@@ -40,6 +43,7 @@ import {
     updateDocument,
     SurfaceConflictError,
     resetWindowPositions,
+    arrangeByLinks,
     createSketch,
     updateSketch,
     setItemLocked,
@@ -52,12 +56,17 @@ import {
     deleteItem,
 } from './surface.server';
 
+const ALICE = 'user-alice';
 const user = {
+    id: ALICE,
     name: 'Alice Smith',
     email: 'alice@example.test',
 } as SessionUser;
 
-beforeEach(() => resetSurface());
+beforeEach(() => {
+    resetSurface();
+    rememberPerson(user);
+});
 afterEach(() => vi.useRealTimers());
 
 describe('surface store', () => {
@@ -81,12 +90,37 @@ describe('surface store', () => {
         expect(getItem('doc-brief').createdById).toBe('maya');
     });
 
-    it('names "me" after the signed-in user', async () => {
+    it('puts the signed-in user on the surface, first, by their user id', async () => {
         const surface = await getSurfaceForUser(user, SEED_SURFACE_ID).then(
             (surface) => surface!,
         );
-        const me = surface.people.find((person) => person.id === ME_ID);
-        expect(me).toMatchObject({ name: 'Alice Smith', initials: 'AS' });
+        expect(surface.meId).toBe(ALICE);
+        expect(surface.people[0]).toMatchObject({
+            id: ALICE,
+            name: 'Alice Smith',
+            initials: 'AS',
+        });
+    });
+
+    it('keeps every signed-in person, once each, and lets them write', async () => {
+        const bob = { id: 'user-bob', name: '', email: 'bob@example.test' };
+        await getSurfaceForUser(bob as SessionUser, SEED_SURFACE_ID);
+        await getSurfaceForUser(bob as SessionUser, SEED_SURFACE_ID);
+        const people = listPeople().filter((person) =>
+            [ALICE, 'user-bob'].includes(person.id),
+        );
+        // No name: they go by their email.
+        expect(people.map((person) => person.name)).toEqual([
+            'Alice Smith',
+            'bob@example.test',
+        ]);
+        expect(
+            postMessage({
+                chatId: 'chat-launch',
+                authorId: 'user-bob',
+                text: 'Hi',
+            }),
+        ).toMatchObject({ authorId: 'user-bob' });
     });
 
     it('hands out copies, so callers cannot change the store', async () => {
@@ -98,14 +132,14 @@ describe('surface store', () => {
         expect(listItems()).toHaveLength(before);
     });
 
-    it('creates a chat with the agent and me, and an opening message', () => {
+    it('creates a chat with its author and the agent, and an opening message', () => {
         const chat = createChat({
             surfaceId: SEED_SURFACE_ID,
             title: 'Pricing',
             firstMessage: 'Hi all',
         });
 
-        expect(chat.participantIds).toEqual([ME_ID, AGENT_ID]);
+        expect(chat.participantIds).toEqual([AGENT_ID]);
         const stored = getItem(chat.id);
         expect(stored.kind === 'chat' && stored.messages[0]).toMatchObject({
             authorId: AGENT_ID,
@@ -124,9 +158,9 @@ describe('surface store', () => {
         ).toThrow(SurfaceError);
     });
 
-    it('answers my message after a pause, flagging the wait meanwhile', async () => {
+    it('answers a person after a pause, flagging the wait meanwhile', async () => {
         vi.useFakeTimers();
-        postMessage({ chatId: 'chat-launch', authorId: ME_ID, text: 'Ping' });
+        postMessage({ chatId: 'chat-launch', authorId: ALICE, text: 'Ping' });
 
         const waiting = getItem('chat-launch');
         expect(waiting.kind === 'chat' && waiting.awaitingReply).toBe(true);
@@ -135,7 +169,29 @@ describe('surface store', () => {
         const answered = getItem('chat-launch');
         if (answered.kind !== 'chat') throw new Error('expected a chat');
         expect(answered.awaitingReply).toBe(false);
-        expect(answered.messages.at(-1)!.authorId).not.toBe(ME_ID);
+        expect(['jordan', 'maya', 'dev']).toContain(
+            answered.messages.at(-1)!.authorId,
+        );
+    });
+
+    it('never makes up a reply from a real person', async () => {
+        vi.useFakeTimers();
+        const bob = { id: 'user-bob', name: 'Bob', email: 'b@example.test' };
+        rememberPerson(bob as SessionUser);
+        const chat = createChat({
+            surfaceId: SEED_SURFACE_ID,
+            title: 'Just us',
+            participantIds: [ALICE, 'user-bob'],
+            authorId: ALICE,
+        });
+        postMessage({ chatId: chat.id, authorId: ALICE, text: 'Ping' });
+        await vi.advanceTimersByTimeAsync(MOCK_REPLY_DELAY_MS);
+        const after = getItem(chat.id);
+        invariant(after.kind === 'chat');
+        expect(after.awaitingReply).toBeFalsy();
+        expect(after.messages.map((message) => message.authorId)).toEqual([
+            ALICE,
+        ]);
     });
 
     it('does not auto-answer agents', () => {
@@ -148,7 +204,7 @@ describe('surface store', () => {
 
     it('will not post to a document', () => {
         expect(() =>
-            postMessage({ chatId: 'doc-brief', authorId: ME_ID, text: 'x' }),
+            postMessage({ chatId: 'doc-brief', authorId: ALICE, text: 'x' }),
         ).toThrow(/not a chat/);
     });
 
@@ -199,8 +255,9 @@ describe('surface store', () => {
             documentId: doc.id,
             blocks: markdownToPortableText('Second'),
             baseUpdatedAt: doc.updatedAt,
+            authorId: ALICE,
         });
-        expect(saved.authorId).toBe(ME_ID);
+        expect(saved.authorId).toBe(ALICE);
         expect(saved.updatedAt > doc.updatedAt).toBe(true);
 
         // An agent appends; a save still based on the earlier version fails.
@@ -228,13 +285,14 @@ describe('surface store', () => {
         setItemColor('chat-launch', 'rose');
         const copy = duplicateItem({
             itemId: 'chat-launch',
+            authorId: ALICE,
             position: { x: 40, y: 50 },
         });
         const original = getItem('chat-launch');
         expect(copy).toMatchObject({
             kind: 'chat',
             title: `${original.title} (copy)`,
-            createdById: ME_ID,
+            createdById: ALICE,
         });
         expect(copy.id).not.toBe('chat-launch');
         invariant(copy.kind === 'chat' && original.kind === 'chat');
@@ -269,10 +327,11 @@ describe('surface store', () => {
             surfaceId: SEED_SURFACE_ID,
             kind: 'chat',
             position: { x: 10, y: 20 },
+            authorId: ALICE,
         });
         expect(chat).toMatchObject({
             title: 'New chat',
-            createdById: ME_ID,
+            createdById: ALICE,
             surfaceId: SEED_SURFACE_ID,
         });
         const board = addCard({
@@ -513,6 +572,26 @@ describe('surface store', () => {
                 )
             ).arrangement.positions,
         ).toEqual({});
+    });
+
+    it('arranges by links: saves a spot for every card, and keeps locked ones', async () => {
+        setItemLocked('chat-launch', true, { x: 5000, y: 5000 });
+        const before = (await getSurfaceForUser(user, SEED_SURFACE_ID))!;
+        const moved = arrangeByLinks(SEED_SURFACE_ID);
+        const after = (await getSurfaceForUser(user, SEED_SURFACE_ID))!;
+        expect(after.arrangement.layoutVersion).toBe(
+            (before.arrangement.layoutVersion ?? 0) + 1,
+        );
+        expect(after.arrangement.positions['chat-launch']).toEqual({
+            x: 5000,
+            y: 5000,
+        });
+        expect(moved['chat-launch']).toBeUndefined();
+        // Every other card that doesn't hang under the locked chat moves.
+        expect(Object.keys(moved).length).toBeGreaterThan(5);
+        for (const [id, spot] of Object.entries(moved)) {
+            expect(after.arrangement.positions[id]).toEqual(spot);
+        }
     });
 
     it('will not arrange items that do not exist', () => {
@@ -811,6 +890,36 @@ describe('surface store', () => {
         expect(unlinkCards({ from: a.id, to: b.id })).toBe(0);
     });
 
+    it("lists a surface's links with both cards' titles, so agents can remove them", () => {
+        const a = createNote({ surfaceId: SEED_SURFACE_ID, text: 'Day one' });
+        const b = createNote({ surfaceId: SEED_SURFACE_ID, text: 'Day two' });
+        const link = linkItems({ from: a.id, to: b.id, label: 'next day' });
+        expect(listLinks(SEED_SURFACE_ID)).toContainEqual({
+            ...link,
+            fromTitle: 'Day one',
+            toTitle: 'Day two',
+        });
+        expect(listLinks('northwind').some((r) => r.id === link.id)).toBe(
+            false,
+        );
+        unlinkCards({ from: a.id, to: b.id });
+        expect(listLinks(SEED_SURFACE_ID).some((r) => r.id === link.id)).toBe(
+            false,
+        );
+    });
+
+    it("moves a surface's version when anything on it changes, and only then", () => {
+        const before = surfaceVersion(SEED_SURFACE_ID);
+        expect(before).toEqual(expect.any(String));
+        expect(surfaceVersion(SEED_SURFACE_ID)).toBe(before);
+        // Another surface's cards leave this one's version alone.
+        const elsewhere = surfaceVersion('northwind');
+        createNote({ surfaceId: SEED_SURFACE_ID, text: 'New' });
+        expect(surfaceVersion(SEED_SURFACE_ID)).not.toBe(before);
+        expect(surfaceVersion('northwind')).toBe(elsewhere);
+        expect(surfaceVersion('no-such-surface')).toBeNull();
+    });
+
     it('edits an issue in place and keeps its comments', () => {
         updateIssue({
             boardId: 'board-atlas',
@@ -823,7 +932,7 @@ describe('surface store', () => {
             boardId: 'board-atlas',
             issueId: 'ATL-14',
             text: 'Agreed',
-            authorId: ME_ID,
+            authorId: ALICE,
         });
         const board = getItem('board-atlas');
         if (board.kind !== 'board') throw new Error('expected a board');

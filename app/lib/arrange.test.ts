@@ -1,6 +1,18 @@
 import { describe, expect, it } from 'vitest';
-import { GROUP_GAP, arrangeGroups, currentLayout, topLeftOf } from './arrange';
-import { WINDOW_GAP, WINDOW_SIZES, type SurfaceItem } from './surface';
+import {
+    GROUP_GAP,
+    arrangeGroups,
+    clusterLayout,
+    currentLayout,
+    topLeftOf,
+} from './arrange';
+import {
+    WINDOW_GAP,
+    WINDOW_SIZES,
+    sizeOf,
+    type Relation,
+    type SurfaceItem,
+} from './surface';
 
 const chat = (id: string): SurfaceItem => ({
     kind: 'chat',
@@ -35,6 +47,56 @@ const chart = (id: string, attachedTo: string): SurfaceItem => ({
     updatedAt: '2026-10-25T00:00:00Z',
     createdById: 'me',
 });
+
+const doc = (id: string): SurfaceItem => ({
+    kind: 'document',
+    id,
+    surfaceId: 's',
+    title: id,
+    authorId: 'me',
+    createdById: 'me',
+    updatedAt: '2026-10-25T00:00:00Z',
+    blocks: [],
+});
+
+const link = (from: string, to: string): Relation => ({
+    id: `${from}>${to}`,
+    from,
+    to,
+    label: 'made',
+});
+
+/** Each card's box where the layout put it. */
+function boxes(
+    items: SurfaceItem[],
+    positions: Record<string, { x: number; y: number }>,
+) {
+    return items
+        .filter((item) => positions[item.id])
+        .map((item) => ({
+            id: item.id,
+            ...positions[item.id]!,
+            ...sizeOf(item),
+        }));
+}
+
+type Rect = { x: number; y: number; width: number; height: number };
+const overlap = (a: Rect, b: Rect) =>
+    a.x < b.x + b.width &&
+    b.x < a.x + a.width &&
+    a.y < b.y + b.height &&
+    b.y < a.y + a.height;
+
+function bounds(rects: Rect[]): Rect {
+    const x = Math.min(...rects.map((r) => r.x));
+    const y = Math.min(...rects.map((r) => r.y));
+    return {
+        x,
+        y,
+        width: Math.max(...rects.map((r) => r.x + r.width)) - x,
+        height: Math.max(...rects.map((r) => r.y + r.height)) - y,
+    };
+}
 
 const origin = { x: 100, y: 50 };
 
@@ -151,5 +213,103 @@ describe('topLeftOf', () => {
             ]),
         ).toEqual({ x: 5, y: 3 });
         expect(topLeftOf([])).toEqual({ x: 0, y: 0 });
+    });
+});
+
+describe('clusterLayout', () => {
+    // The chat made a document and five notes, and a chart hangs under it.
+    const made = [
+        chat('chat'),
+        chart('chart', 'chat'),
+        doc('doc'),
+        ...['n1', 'n2', 'n3', 'n4', 'n5'].map(note),
+    ];
+    const madeLinks = ['doc', 'n1', 'n2', 'n3', 'n4', 'n5'].map((id) =>
+        link('chat', id),
+    );
+
+    it('puts a cluster around its hub, wrapped into rows, not one long line', () => {
+        const positions = clusterLayout(made, madeLinks);
+        expect(positions.chat).toEqual({ x: 0, y: 0 });
+        expect(positions.chart).toEqual({
+            x: 0,
+            y: WINDOW_SIZES.chat.height + WINDOW_GAP,
+        });
+        const placed = boxes(made, positions);
+        for (const box of placed.filter(
+            (b) => !['chat', 'chart'].includes(b.id),
+        )) {
+            expect(box.x).toBeGreaterThanOrEqual(
+                WINDOW_SIZES.chat.width + WINDOW_GAP,
+            );
+        }
+        // Tallest first: the document leads the cards beside the hub.
+        expect(positions.doc).toEqual({
+            x: WINDOW_SIZES.chat.width + WINDOW_GAP,
+            y: 0,
+        });
+        const all = bounds(placed);
+        const inOneLine = placed.reduce(
+            (sum, b) => sum + b.width + WINDOW_GAP,
+            0,
+        );
+        expect(all.width).toBeLessThan(inOneLine / 2);
+        for (const [i, a] of placed.entries()) {
+            for (const b of placed.slice(i + 1))
+                expect(overlap(a, b)).toBe(false);
+        }
+    });
+
+    it('keeps separate topics in separate blocks, and loose cards last', () => {
+        const items = [
+            ...made,
+            chat('other'),
+            note('o1'),
+            note('o2'),
+            note('stray'),
+            chat('quiet'),
+        ];
+        const relations = [
+            ...madeLinks,
+            link('other', 'o1'),
+            link('o2', 'other'),
+        ];
+        const positions = clusterLayout(items, relations);
+        const placed = boxes(items, positions);
+        const of = (ids: string[]) =>
+            bounds(placed.filter((box) => ids.includes(box.id)));
+        const first = of(made.map((item) => item.id));
+        const second = of(['other', 'o1', 'o2']);
+        const loose = of(['stray', 'quiet']);
+        expect(overlap(first, second)).toBe(false);
+        expect(overlap(first, loose)).toBe(false);
+        expect(overlap(second, loose)).toBe(false);
+        // The biggest cluster first; loose cards after, chats first.
+        expect(positions.chat).toEqual({ x: 0, y: 0 });
+        expect(positions.quiet!.x).toBeLessThan(positions.stray!.x);
+        expect(positions.quiet!.y).toBe(positions.stray!.y);
+    });
+
+    it('centers a cluster on the card with the most links', () => {
+        const items = [chat('c'), note('hub'), note('a'), note('b')];
+        const positions = clusterLayout(items, [
+            link('c', 'hub'),
+            link('hub', 'a'),
+            link('b', 'hub'),
+        ]);
+        expect(positions.hub).toEqual({ x: 0, y: 0 });
+        expect(positions.c!.x).toBeGreaterThan(0);
+    });
+
+    it('leaves locked cards, and what hangs under them, where they are', () => {
+        const positions = clusterLayout(made, madeLinks, {
+            locked: new Set(['chat']),
+        });
+        expect(positions.chat).toBeUndefined();
+        expect(positions.chart).toBeUndefined();
+        // With its hub pinned, the rest link nothing together: loose cards.
+        expect(Object.keys(positions).sort()).toEqual(
+            ['doc', 'n1', 'n2', 'n3', 'n4', 'n5'].sort(),
+        );
     });
 });
