@@ -41,6 +41,11 @@ import {
 import { documentBlocksSchema } from '~/lib/portable-text';
 import { sketchStrokesSchema } from '~/lib/sketch';
 import { readNavPanel } from '~/lib/nav-panel';
+import { canvasSettingsSchema } from '~/lib/canvas-settings';
+import {
+    getCanvasSettings,
+    serializeCanvasSettings,
+} from '~/lib/canvas-settings.server';
 import {
     getNavCollapsed,
     getNavOrder,
@@ -133,6 +138,7 @@ export async function loader({ request, context, params }: Route.LoaderArgs) {
         navOrder: await getNavOrder(request),
         navCollapsed: await getNavCollapsed(request),
         navPanel: readNavPanel(request.headers.get('Cookie')),
+        canvasSettings: await getCanvasSettings(request),
         /** Agent chats answer for real (Claude) instead of from the mock. */
         liveAgent: Boolean(env.ANTHROPIC_API_KEY),
     };
@@ -223,6 +229,7 @@ const intentSchema = z.discriminatedUnion('intent', [
             'pull-request',
             'note',
             'sketch',
+            'ui',
         ]),
         title: z.string().trim().max(160).optional(),
         url: z.string().trim().max(2000).optional(),
@@ -350,6 +357,9 @@ const intentSchema = z.discriminatedUnion('intent', [
             })
             .pipe(navCollapsedSchema),
     }),
+    canvasSettingsSchema.extend({
+        intent: z.literal('set-canvas-settings'),
+    }),
     z.object({
         intent: z.literal('set-color'),
         itemId: z.string().min(1),
@@ -444,6 +454,17 @@ async function applyIntent({ request, context, params }: Route.ActionArgs) {
             {
                 headers: {
                     'Set-Cookie': await serializeNavCollapsed(input.collapsed),
+                },
+            },
+        );
+    }
+    if (input.intent === 'set-canvas-settings') {
+        const { intent: _intent, ...settings } = input;
+        return data(
+            { error: null },
+            {
+                headers: {
+                    'Set-Cookie': await serializeCanvasSettings(settings),
                 },
             },
         );
@@ -888,6 +909,7 @@ export default function SurfaceRoute({ loaderData }: Route.ComponentProps) {
                             visitKey={location.key}
                             onSearch={() => setSearching(true)}
                             present={present}
+                            canvasSettings={loaderData.canvasSettings}
                         />
                         <div className="pointer-events-none absolute inset-x-0 top-0">
                             <Outlet />

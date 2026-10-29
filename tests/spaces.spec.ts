@@ -36,7 +36,7 @@ test.describe('Spaces and surfaces', () => {
         ).toBeVisible();
     });
 
-    test('a new surface opens empty, ready for cards', async ({
+    test('a new surface opens with a chat with the agent, ready for cards', async ({
         authedPage: page,
     }) => {
         const name = `Planning ${Date.now()}`;
@@ -54,7 +54,10 @@ test.describe('Spaces and surfaces', () => {
                 name: `Surface: ${name}, in Product. Switch surface`,
             }),
         ).toBeVisible();
-        await expect(page.locator('[data-node-id]')).toHaveCount(0);
+        await expect(page.locator('[data-node-id]')).toHaveCount(1);
+        await expect(
+            page.getByRole('region', { name: 'Chat: Ask the agent' }),
+        ).toBeVisible();
     });
 
     test('an unknown surface answers 404 with a way home', async ({

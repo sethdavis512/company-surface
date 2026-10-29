@@ -103,14 +103,22 @@ function inkOptions(stroke: SketchStroke): StrokeOptions {
 
 /** The SVG path of a stroke's ink: an outline to fill, not a line to stroke. */
 export function strokePath(stroke: SketchStroke): string {
+    return outlinePath(strokeOutline(stroke));
+}
+
+/**
+ * The filled outline of a stroke, as paper coordinates: what `strokePath`
+ * draws, and what `sketchPng` fills. Empty for a stroke under two points.
+ */
+export function strokeOutline(stroke: SketchStroke): number[][] {
     const { points, pressures } = stroke;
-    if (points.length < 2) return '';
+    if (points.length < 2) return [];
     const input = Array.from({ length: points.length / 2 }, (_, i) =>
         pressures
             ? [points[i * 2], points[i * 2 + 1], pressures[i]]
             : [points[i * 2], points[i * 2 + 1]],
     );
-    return outlinePath(getStroke(fillGaps(input), inkOptions(stroke)));
+    return getStroke(fillGaps(input), inkOptions(stroke));
 }
 
 /** Gaps longer than this get points in between (`fillGaps`). */

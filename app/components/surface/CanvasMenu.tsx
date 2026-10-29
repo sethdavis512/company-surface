@@ -42,13 +42,15 @@ const ADD_HERE: { kind: SurfaceItemKind; label: string }[] = [
     { kind: 'board', label: 'Board' },
     { kind: 'note', label: 'Sticky note' },
     { kind: 'sketch', label: 'Sketch' },
+    { kind: 'ui', label: 'UI' },
     { kind: 'video', label: 'Video…' },
     { kind: 'web', label: 'Web page…' },
     { kind: 'image', label: 'Image…' },
 ];
 
 /** What on the canvas keeps the browser's own menu (cards, trays, maps). */
-const NOT_EMPTY =
+/** What isn't empty canvas: cards and the trays and controls over it. */
+export const NOT_EMPTY =
     '[data-node-id], .trellis__panel, .trellis__controls, .trellis__minimap';
 
 /** Controls in a card's header that keep their own (or the browser's) menu. */

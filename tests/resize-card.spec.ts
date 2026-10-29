@@ -40,6 +40,13 @@ async function openChatSurface(page: Page) {
         spaceId: 'product',
         name: `Resize ${crypto.randomUUID().slice(0, 6)}`,
     });
+    // A new surface starts with a chat with the agent; this test wants an
+    // empty canvas.
+    for (const card of await mcp(page, 'list_cards', {
+        surfaceId: surface.id,
+    })) {
+        await mcp(page, 'delete_card', { itemId: card.id });
+    }
     const chat = await mcp(page, 'create_chat', {
         surfaceId: surface.id,
         title: 'Stretchy',

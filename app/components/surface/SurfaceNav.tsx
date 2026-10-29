@@ -48,6 +48,7 @@ const KIND_LABELS: Record<SurfaceItemKind, string> = {
     image: 'Images',
     note: 'Sticky notes',
     sketch: 'Sketches',
+    ui: 'UI cards',
 };
 
 type Props = {

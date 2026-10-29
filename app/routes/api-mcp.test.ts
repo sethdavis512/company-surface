@@ -276,7 +276,8 @@ describe('/api/mcp', () => {
                 })
             ).content[0]!.text,
         );
-        expect(surface).toMatchObject({ cardCount: 0, spaceId: space.id });
+        // Every new surface starts with a chat with the agent.
+        expect(surface).toMatchObject({ cardCount: 1, spaceId: space.id });
         await callTool('create_chat', {
             surfaceId: surface.id,
             title: 'Pager',
@@ -286,18 +287,71 @@ describe('/api/mcp', () => {
                 .content[0]!.text,
         );
         expect(onCall.map((card: { title: string }) => card.title)).toEqual([
+            'Ask the agent',
             'Pager',
         ]);
 
         // Cards and links stay within one surface.
         const crossLink = await callTool('link_cards', {
-            from: onCall[0].id,
+            from: onCall[1].id,
             to: 'doc-brief',
             label: 'about',
         });
         expect(crossLink.isError).toBe(true);
         const noSurface = await callTool('create_chat', { title: 'Lost' });
         expect(noSurface.isError).toBe(true);
+    });
+
+    it('shows a sketch as a PNG and an image as its address, nothing else', async () => {
+        const sketch = JSON.parse(
+            (
+                await callTool('add_sketch', {
+                    surfaceId: 'atlas-launch',
+                    title: 'Wireframe',
+                    strokes: [
+                        {
+                            color: '#000000',
+                            size: 6,
+                            points: [10, 10, 300, 200],
+                        },
+                    ],
+                })
+            ).content[0]!.text,
+        );
+        const looked = (await callTool('look_at_card', {
+            itemId: sketch.id,
+        })) as unknown as {
+            content: {
+                type: string;
+                text?: string;
+                data?: string;
+                mimeType?: string;
+            }[];
+        };
+        expect(looked.content[0]).toMatchObject({ type: 'text' });
+        expect(looked.content[0]!.text).toContain('Wireframe');
+        expect(looked.content[1]).toMatchObject({
+            type: 'image',
+            mimeType: 'image/png',
+        });
+        expect(
+            Buffer.from(looked.content[1]!.data!, 'base64').toString(
+                'ascii',
+                1,
+                4,
+            ),
+        ).toBe('PNG');
+
+        const image = await callTool('look_at_card', {
+            itemId: 'image-iphone',
+        });
+        expect(JSON.parse(image.content[0]!.text)).toMatchObject({
+            src: expect.stringMatching(/^https:/),
+        });
+
+        const doc = await callTool('look_at_card', { itemId: 'doc-brief' });
+        expect(doc.isError).toBe(true);
+        expect(doc.content[0]!.text).toMatch(/only sketches and images/);
     });
 
     it('reports store errors as tool errors', async () => {

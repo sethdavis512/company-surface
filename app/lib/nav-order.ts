@@ -14,6 +14,7 @@ export const NAV_SECTIONS = [
     'image',
     'note',
     'sketch',
+    'ui',
 ] as const;
 
 export type NavSectionKey = (typeof NAV_SECTIONS)[number];
