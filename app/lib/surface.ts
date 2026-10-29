@@ -41,6 +41,8 @@ export type ChatItem = {
     /** Someone is "typing": a reply (the agent's, or the mock's) is on its way. */
     awaitingReply?: boolean;
     createdById: string;
+    /** Where someone resized it (`resizeItem`); unset, it rests at its kind's size. */
+    size?: CardSize;
 };
 
 /** Portable Text, with links to other items (`app/lib/portable-text.ts`). */
@@ -568,8 +570,71 @@ export type WindowPlacement = {
     height: number;
 };
 
-/** A card's resting size: its kind's. */
-export function sizeOf(item: SurfaceItem): { width: number; height: number } {
+export type CardSize = { width: number; height: number };
+
+/**
+ * Cards you can resize by dragging their edges, and how far: never below
+ * their kind's size, never past `max`. Chats grow to a 16:9 box's width at
+ * their resting height (640 * 16/9), and as tall as that is wide.
+ */
+export const RESIZE_LIMITS = {
+    chat: { min: WINDOW_SIZES.chat, max: { width: 1138, height: 1138 } },
+} as const satisfies Partial<
+    Record<SurfaceItemKind, { min: CardSize; max: CardSize }>
+>;
+
+export type ResizableKind = keyof typeof RESIZE_LIMITS;
+
+export function isResizable(kind: SurfaceItemKind): kind is ResizableKind {
+    return kind in RESIZE_LIMITS;
+}
+
+/** A size kept within its kind's limits, in whole pixels. */
+export function clampSize(kind: ResizableKind, size: CardSize): CardSize {
+    const { min, max } = RESIZE_LIMITS[kind];
+    const fit = (value: number, low: number, high: number) =>
+        Math.round(Math.min(high, Math.max(low, value)));
+    return {
+        width: fit(size.width, min.width, max.width),
+        height: fit(size.height, min.height, max.height),
+    };
+}
+
+/** Which edges a resize drags: one side, or two at a corner. */
+export type ResizeEdges = {
+    x?: 'left' | 'right';
+    y?: 'top' | 'bottom';
+};
+
+/**
+ * A card's box after dragging `edges` by `delta` flow px (screen px over
+ * the zoom), clamped to its limits. The opposite edges stay put, so
+ * dragging the left or top edge moves the card as it grows.
+ */
+export function resizeBox(
+    kind: ResizableKind,
+    start: CardSize & { x: number; y: number },
+    edges: ResizeEdges,
+    delta: { x: number; y: number },
+): CardSize & { x: number; y: number } {
+    const size = clampSize(kind, {
+        width:
+            start.width +
+            (edges.x === 'right' ? delta.x : edges.x === 'left' ? -delta.x : 0),
+        height:
+            start.height +
+            (edges.y === 'bottom' ? delta.y : edges.y === 'top' ? -delta.y : 0),
+    });
+    return {
+        ...size,
+        x: edges.x === 'left' ? start.x + start.width - size.width : start.x,
+        y: edges.y === 'top' ? start.y + start.height - size.height : start.y,
+    };
+}
+
+/** A card's resting size: where someone resized it to, else its kind's. */
+export function sizeOf(item: SurfaceItem): CardSize {
+    if (item.kind === 'chat' && item.size) return item.size;
     return WINDOW_SIZES[item.kind];
 }
 
@@ -711,13 +776,16 @@ export function pushRecent(
  * everything already there, so nothing the person arranged moves.
  */
 export function placeNewWindow(
-    existing: { x: number; kind: SurfaceItemKind }[],
+    existing: { x: number; kind: SurfaceItemKind; width?: number }[],
     kind: SurfaceItemKind,
 ): { x: number; y: number } {
     const right = Math.max(
         0,
         ...existing.map(
-            (window) => window.x + WINDOW_SIZES[window.kind].width + WINDOW_GAP,
+            (window) =>
+                window.x +
+                (window.width ?? WINDOW_SIZES[window.kind].width) +
+                WINDOW_GAP,
         ),
     );
     const rowHeight = WINDOW_SIZES.chat.height;

@@ -1,6 +1,7 @@
 import { createContext, useContext } from 'react';
 import { useParams } from 'react-router';
 import type {
+    CardSize,
     Person,
     PullRequestItem,
     SurfaceItem,
@@ -108,5 +109,25 @@ export const RenamingContext = createContext<Renaming | null>(null);
 export function useRenaming(): Renaming {
     const value = useContext(RenamingContext);
     if (!value) throw new Error('useRenaming needs a RenamingContext');
+    return value;
+}
+
+type Box = CardSize & { x: number; y: number };
+
+type Resizing = {
+    /** Where a card is and how big, at the start of a resize. */
+    begin: (itemId: string) => Box | null;
+    /** Resizes a card on the canvas while its edge is dragged. */
+    resize: (itemId: string, box: Box) => void;
+    /** Saves the box it was dropped at (`resize-card`). */
+    commit: (itemId: string, box: Box) => void;
+};
+
+/** Resizing cards by their edges (`ResizeEdges`). */
+export const ResizingContext = createContext<Resizing | null>(null);
+
+export function useResizing(): Resizing {
+    const value = useContext(ResizingContext);
+    if (!value) throw new Error('useResizing needs a ResizingContext');
     return value;
 }

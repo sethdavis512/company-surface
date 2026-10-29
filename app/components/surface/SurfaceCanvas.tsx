@@ -51,6 +51,7 @@ import {
     parentIdOf,
     placeWindows,
     restack,
+    type CardSize,
     type Insets,
     type PullRequestItem,
     type Surface,
@@ -78,6 +79,7 @@ import { PullRequestWindow, type PullRequestNode } from './PullRequestWindow';
 import {
     FocusedItemContext,
     RenamingContext,
+    ResizingContext,
     StackingContext,
     SurfaceItemsContext,
     WindowColorContext,
@@ -195,8 +197,17 @@ function syncNodes(nodes: SurfaceNode[], surface: Surface): SurfaceNode[] {
     for (const item of surface.items) {
         const node = current.get(item.id);
         if (node) {
+            // A card resized somewhere else (an agent, another tab) takes its
+            // new size, unless it isn't resting: focused, or being resized.
+            const was = sizeOf(node.data.item);
+            const now = sizeOf(item);
+            const resting =
+                node.width === was.width && node.height === was.height;
+            const resized =
+                was.width !== now.width || was.height !== now.height;
             synced.push({
                 ...node,
+                ...(resting && resized ? now : {}),
                 ariaLabel: item.title,
                 data: { item },
             } as SurfaceNode);
@@ -233,6 +244,7 @@ function syncNodes(nodes: SurfaceNode[], surface: Surface): SurfaceNode[] {
                   synced.map((node) => ({
                       x: node.position.x,
                       kind: node.type!,
+                      width: sizeOf(node.data.item).width,
                   })),
                   item.kind,
               );
@@ -461,6 +473,117 @@ function useFocusView(
     ]);
 }
 
+type Box = CardSize & { x: number; y: number };
+
+/**
+ * Resizing cards by their edges (`ResizeEdges`): the card follows the
+ * pointer on the canvas, then its box is saved on release (`resize-card`).
+ * Cards hanging under it move with its bottom and left edges, so the column
+ * stays lined up under it and never overlaps it.
+ */
+function useCardResizing(
+    surface: Surface,
+    setNodes: Dispatch<SetStateAction<SurfaceNode[]>>,
+    locked: Set<string>,
+) {
+    const links = useSurfaceLinks();
+    const flow = useFlow();
+    const submit = useSubmit();
+    const start = useRef<{
+        box: Box;
+        hanging: Map<string, { x: number; y: number }>;
+    } | null>(null);
+
+    return useMemo(() => {
+        // Where the hanging cards go for a card at `box`.
+        const hangingAt = (box: Box) => {
+            const from = start.current;
+            if (!from) return new Map<string, { x: number; y: number }>();
+            const dx = box.x - from.box.x;
+            const dy = box.y + box.height - (from.box.y + from.box.height);
+            return new Map(
+                [...from.hanging].map(([id, spot]) => [
+                    id,
+                    { x: spot.x + dx, y: spot.y + dy },
+                ]),
+            );
+        };
+        const save = (fields: Record<string, string>, key: string) =>
+            void submit(fields, {
+                method: 'post',
+                action: links.action,
+                navigate: false,
+                fetcherKey: key,
+            });
+
+        return {
+            begin: (itemId: string) => {
+                const box = flow.getNodeBox(itemId);
+                if (!box) return null;
+                const hanging = new Map<string, { x: number; y: number }>();
+                for (const id of hangingUnder(itemId, surface.items)) {
+                    const node = flow.getNode(id);
+                    if (node && !locked.has(id)) {
+                        hanging.set(id, { ...node.position });
+                    }
+                }
+                start.current = { box, hanging };
+                return box;
+            },
+            resize: (itemId: string, box: Box) => {
+                const moved = hangingAt(box);
+                setNodes((all) =>
+                    all.map((node) => {
+                        if (node.id === itemId) {
+                            return {
+                                ...node,
+                                width: box.width,
+                                height: box.height,
+                                position: { x: box.x, y: box.y },
+                                // Follow the pointer, not a transition left
+                                // over from focusing.
+                                className: undefined,
+                            };
+                        }
+                        const spot = moved.get(node.id);
+                        return spot ? { ...node, position: spot } : node;
+                    }),
+                );
+            },
+            commit: (itemId: string, box: Box) => {
+                const from = start.current;
+                const moved = hangingAt(box);
+                start.current = null;
+                if (!from) return;
+                const shifted = box.x !== from.box.x || box.y !== from.box.y;
+                save(
+                    {
+                        intent: 'resize-card',
+                        itemId,
+                        width: String(box.width),
+                        height: String(box.height),
+                        ...(shifted
+                            ? { x: String(box.x), y: String(box.y) }
+                            : {}),
+                    },
+                    `resize:${itemId}`,
+                );
+                if (moved.size > 0) {
+                    save(
+                        {
+                            intent: 'move-windows',
+                            positions: JSON.stringify(
+                                Object.fromEntries(moved),
+                            ),
+                        },
+                        `resize-hanging:${itemId}`,
+                    );
+                }
+            },
+        };
+    }, [flow, submit, links.action, setNodes, surface.items, locked]);
+}
+
 /**
  * Arrange: slides every window back into the canvas's tidy layout (chats in
  * a row, then documents, each pull request under its chat; see
@@ -675,6 +798,7 @@ export function SurfaceCanvas({
         () => ({ colorOf: (id: string) => colors[id], setColor }),
         [colors, setColor],
     );
+    const resizing = useCardResizing(surface, setNodes, locked);
     const [renamingId, setRenamingId] = useState<string | null>(null);
     const renaming = useMemo(
         () => ({
@@ -851,118 +975,132 @@ export function SurfaceCanvas({
                     <StackingContext.Provider value={stacking}>
                         <WindowColorContext.Provider value={windowColors}>
                             <RenamingContext.Provider value={renaming}>
-                                <DeleteCardProvider>
-                                    <CanvasMenu
-                                        onArrange={arrange}
-                                        onSearch={onSearch}
-                                        linkLabel={(id) =>
-                                            surface.relations.find(
-                                                (relation) =>
-                                                    relation.id === id,
-                                            )?.label
-                                        }
-                                        onRemoveLink={removeLink}
-                                    >
-                                        <div className="size-full">
-                                            <Flow
-                                                nodes={stackedNodes}
-                                                edges={shownEdges}
-                                                onNodesChange={
-                                                    handleNodesChange
-                                                }
-                                                onEdgesChange={onEdgesChange}
-                                                nodeTypes={nodeTypes}
-                                                edgeTypes={edgeTypes}
-                                                onNodeDoubleClick={
-                                                    handleNodeDoubleClick
-                                                }
-                                                onPaneClick={handlePaneClick}
-                                                onConnect={handleConnect}
-                                                isValidConnection={canConnect}
-                                                deleteKeys={null}
-                                                scrollMode="pan"
-                                                minZoom={0.2}
-                                                maxZoom={1.5}
-                                                fitView={{
-                                                    padding:
-                                                        INITIAL_FIT_PADDING,
-                                                }}
-                                                ariaLabel="Company surface"
-                                                className="size-full"
-                                                style={CANVAS_STYLE}
-                                            >
-                                                <Background />
-                                                {!isFocused && (
-                                                    <Controls>
-                                                        <ControlButton
-                                                            label="Arrange cards"
-                                                            onClick={arrange}
+                                <ResizingContext.Provider value={resizing}>
+                                    <DeleteCardProvider>
+                                        <CanvasMenu
+                                            onArrange={arrange}
+                                            onSearch={onSearch}
+                                            linkLabel={(id) =>
+                                                surface.relations.find(
+                                                    (relation) =>
+                                                        relation.id === id,
+                                                )?.label
+                                            }
+                                            onRemoveLink={removeLink}
+                                        >
+                                            <div className="size-full">
+                                                <Flow
+                                                    nodes={stackedNodes}
+                                                    edges={shownEdges}
+                                                    onNodesChange={
+                                                        handleNodesChange
+                                                    }
+                                                    onEdgesChange={
+                                                        onEdgesChange
+                                                    }
+                                                    nodeTypes={nodeTypes}
+                                                    edgeTypes={edgeTypes}
+                                                    onNodeDoubleClick={
+                                                        handleNodeDoubleClick
+                                                    }
+                                                    onPaneClick={
+                                                        handlePaneClick
+                                                    }
+                                                    onConnect={handleConnect}
+                                                    isValidConnection={
+                                                        canConnect
+                                                    }
+                                                    deleteKeys={null}
+                                                    scrollMode="pan"
+                                                    minZoom={0.2}
+                                                    maxZoom={1.5}
+                                                    fitView={{
+                                                        padding:
+                                                            INITIAL_FIT_PADDING,
+                                                    }}
+                                                    ariaLabel="Company surface"
+                                                    className="size-full"
+                                                    style={CANVAS_STYLE}
+                                                >
+                                                    <Background />
+                                                    {!isFocused && (
+                                                        <Controls>
+                                                            <ControlButton
+                                                                label="Arrange cards"
+                                                                onClick={
+                                                                    arrange
+                                                                }
+                                                            >
+                                                                <LayoutGridIcon
+                                                                    aria-hidden="true"
+                                                                    className="size-4"
+                                                                />
+                                                            </ControlButton>
+                                                        </Controls>
+                                                    )}
+                                                    {!isFocused && <MiniMap />}
+                                                    {!isFocused && (
+                                                        <Panel
+                                                            position="top-left"
+                                                            // The whole top row: Add pinned
+                                                            // left, the filters centered in the
+                                                            // rest, never overlapping. Clicks
+                                                            // pass through the gaps to the canvas.
+                                                            style={{ right: 0 }}
+                                                            className="pointer-events-none flex items-start gap-2"
                                                         >
-                                                            <LayoutGridIcon
-                                                                aria-hidden="true"
-                                                                className="size-4"
-                                                            />
-                                                        </ControlButton>
-                                                    </Controls>
-                                                )}
-                                                {!isFocused && <MiniMap />}
-                                                {!isFocused && (
-                                                    <Panel
-                                                        position="top-left"
-                                                        // The whole top row: Add pinned
-                                                        // left, the filters centered in the
-                                                        // rest, never overlapping. Clicks
-                                                        // pass through the gaps to the canvas.
-                                                        style={{ right: 0 }}
-                                                        className="pointer-events-none flex items-start gap-2"
-                                                    >
-                                                        <div className="shrink-0">
-                                                            <AddCardMenu />
-                                                        </div>
-                                                        <div className="pointer-events-none flex min-w-0 flex-1 justify-center">
-                                                            <FilterBar
-                                                                filter={filter}
-                                                                onChange={
-                                                                    setFilter
-                                                                }
-                                                                shown={
-                                                                    surface
-                                                                        .items
-                                                                        .length -
-                                                                    dimmed.size
-                                                                }
-                                                                total={
-                                                                    surface
-                                                                        .items
-                                                                        .length
-                                                                }
-                                                                query={query}
-                                                            />
-                                                        </div>
-                                                    </Panel>
-                                                )}
-                                                {isFocused && (
-                                                    <Panel position="top-left">
-                                                        <Button
-                                                            variant="outline"
-                                                            className="bg-card shadow-md"
-                                                            render={
-                                                                <Link
-                                                                    to={
-                                                                        links.action
+                                                            <div className="shrink-0">
+                                                                <AddCardMenu />
+                                                            </div>
+                                                            <div className="pointer-events-none flex min-w-0 flex-1 justify-center">
+                                                                <FilterBar
+                                                                    filter={
+                                                                        filter
+                                                                    }
+                                                                    onChange={
+                                                                        setFilter
+                                                                    }
+                                                                    shown={
+                                                                        surface
+                                                                            .items
+                                                                            .length -
+                                                                        dimmed.size
+                                                                    }
+                                                                    total={
+                                                                        surface
+                                                                            .items
+                                                                            .length
+                                                                    }
+                                                                    query={
+                                                                        query
                                                                     }
                                                                 />
-                                                            }
-                                                        >
-                                                            <ArrowLeftIcon aria-hidden="true" />
-                                                            Back to canvas
-                                                        </Button>
-                                                    </Panel>
-                                                )}
-                                            </Flow>
-                                        </div>
-                                    </CanvasMenu>
-                                </DeleteCardProvider>
+                                                            </div>
+                                                        </Panel>
+                                                    )}
+                                                    {isFocused && (
+                                                        <Panel position="top-left">
+                                                            <Button
+                                                                variant="outline"
+                                                                className="bg-card shadow-md"
+                                                                render={
+                                                                    <Link
+                                                                        to={
+                                                                            links.action
+                                                                        }
+                                                                    />
+                                                                }
+                                                            >
+                                                                <ArrowLeftIcon aria-hidden="true" />
+                                                                Back to canvas
+                                                            </Button>
+                                                        </Panel>
+                                                    )}
+                                                </Flow>
+                                            </div>
+                                        </CanvasMenu>
+                                    </DeleteCardProvider>
+                                </ResizingContext.Provider>
                             </RenamingContext.Provider>
                         </WindowColorContext.Provider>
                     </StackingContext.Provider>

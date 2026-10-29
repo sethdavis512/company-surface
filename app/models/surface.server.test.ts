@@ -47,6 +47,8 @@ import {
     unlinkCards,
     commentOnIssue,
     renameItem,
+    resizeItem,
+    getLayout,
     deleteItem,
 } from './surface.server';
 
@@ -725,6 +727,38 @@ describe('surface store', () => {
         expect(() => renameItem({ itemId: note.id, title: 'Bye' })).toThrow(
             /first line/,
         );
+    });
+
+    it('resizes chats within their limits and keeps the size as their resting one', async () => {
+        const chat = resizeItem({
+            itemId: 'chat-launch',
+            size: { width: 9000, height: 100 },
+        });
+        expect(chat).toMatchObject({ size: { width: 1138, height: 640 } });
+        resizeItem({
+            itemId: 'chat-launch',
+            size: { width: 500.4, height: 800 },
+            position: { x: -20.2, y: 10 },
+        });
+        const surface = await getSurfaceForUser(user, SEED_SURFACE_ID);
+        invariant(surface);
+        expect(
+            surface.items.find((item) => item.id === 'chat-launch'),
+        ).toMatchObject({ size: { width: 500, height: 800 } });
+        expect(surface.arrangement.positions['chat-launch']).toEqual({
+            x: -20,
+            y: 10,
+        });
+        const spot = getLayout(SEED_SURFACE_ID).find(
+            (card) => card.id === 'chat-launch',
+        );
+        expect(spot).toMatchObject({ width: 500, height: 800 });
+        expect(() =>
+            resizeItem({
+                itemId: 'doc-brief',
+                size: { width: 1000, height: 600 },
+            }),
+        ).toThrow(/can't be resized/);
     });
 
     it('starts sketches blank and saves their whole drawing', () => {
