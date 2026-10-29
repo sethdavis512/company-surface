@@ -47,6 +47,7 @@ import {
     ImageIcon,
     StickyNoteIcon,
     PaletteIcon,
+    LayoutDashboardIcon,
     PlusIcon,
     type LucideIcon,
 } from 'lucide-react';
@@ -102,6 +103,7 @@ const LINK_ICONS: Record<SurfaceItemKind, LucideIcon> = {
     image: ImageIcon,
     note: StickyNoteIcon,
     sketch: PaletteIcon,
+    ui: LayoutDashboardIcon,
 };
 
 function isStatus(id: UniqueIdentifier): id is IssueStatus {

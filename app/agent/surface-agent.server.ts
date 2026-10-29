@@ -42,6 +42,8 @@ import {
     createIssue,
     createNote,
     createSketch,
+    createUi,
+    updateUi,
     createVideo,
     createWebPage,
     getItem,
@@ -55,6 +57,8 @@ import {
     updateIssue,
 } from '~/models/surface.server';
 import { markChanged } from '~/models/surface-events.server';
+import { pictureOf } from '~/models/card-picture.server';
+import { uiGuide, uiSpecInputSchema } from '~/lib/ui-card';
 
 /**
  * The live agent behind agent chats (`isAgentChat`): Claude, run by Mastra,
@@ -183,6 +187,40 @@ export function surfaceTools({
                 return item.surfaceId === surfaceId
                     ? readable(item)
                     : { ...readable(item), ...placeOf(item.surfaceId) };
+            },
+        }),
+        look_at_card: tool({
+            description:
+                'See a sketch or an image card as a picture, on any surface: what it shows, which read_card cannot give you (a sketch there is only stroke coordinates). Look before you describe, build on, or make cards from a drawing, wireframe, diagram, screenshot, or photo.',
+            inputSchema: z.object({ cardId: z.string() }),
+            // The transcript keeps just which card; the picture goes to
+            // the model only, drawn from the card as it is now.
+            execute: ({ cardId }) => {
+                const item = getItem(cardId);
+                pictureOf(item);
+                return ref(item);
+            },
+            toModelOutput: ({ output }) => {
+                const card = output as CardRef;
+                const picture = pictureOf(getItem(card.id));
+                const caption = {
+                    type: 'text' as const,
+                    text: `${card.kind} "${card.title}" (${card.id})${'alt' in picture && picture.alt ? `, described as: ${picture.alt}` : ''}`,
+                };
+                return {
+                    type: 'content',
+                    value:
+                        'url' in picture
+                            ? [caption, { type: 'image-url', url: picture.url }]
+                            : [
+                                  caption,
+                                  {
+                                      type: 'image-data',
+                                      data: picture.data,
+                                      mediaType: picture.mediaType,
+                                  },
+                              ],
+                };
             },
         }),
         search: tool({
@@ -369,6 +407,27 @@ export function surfaceTools({
             }),
             execute: (input) => madeHere(createSketch({ surfaceId, ...input })),
         }),
+        create_ui: tool({
+            description: `Puts a UI card on this surface: a small live interface (a dashboard, a triage list, a review queue, a tracker) you compose from a fixed set of components, bound to the surface's own data so it stays current. Use it when someone wants to see or act on the surface's work at a glance, not for prose (that's a document).\n\n${uiGuide()}`,
+            inputSchema: z.object({
+                title: z.string().min(1).max(TITLE_MAX),
+                spec: uiSpecInputSchema,
+            }),
+            execute: (input) => madeHere(createUi({ surfaceId, ...input })),
+        }),
+        update_ui: tool({
+            description:
+                "Replaces a UI card's spec (and optionally its title) on this surface: read_card first to see the current spec. Same rules as create_ui.",
+            inputSchema: z.object({
+                uiId: z.string(),
+                title: z.string().min(1).max(TITLE_MAX).optional(),
+                spec: uiSpecInputSchema,
+            }),
+            execute: ({ uiId, ...input }) => {
+                onSurface(uiId);
+                return ref(updateUi({ uiId, ...input }));
+            },
+        }),
         add_web_page: tool({
             description:
                 'Opens a web page (https) in a card, hanging under this chat. Many sites refuse to be framed; prefer docs, wikis, and blogs.',
@@ -537,7 +596,9 @@ function instructions(chat: ChatItem, { remembers }: { remembers: boolean }) {
         .slice(0, 80)
         .map((item) => `- ${item.id} (${item.kind}): ${item.title}`)
         .join('\n');
-    return `You are Surface Agent, working with a teammate in the chat "${chat.title}" (id ${chat.id}) on a shared canvas of cards. Cards are chats, documents, charts, issue boards, sticky notes, sketches, web pages, videos, images, and pull requests.
+    return `You are Surface Agent, working with a teammate in the chat "${chat.title}" (id ${chat.id}) on a shared canvas of cards. Cards are chats, documents, charts, issue boards, sticky notes, sketches, web pages, videos, images, pull requests, and UI cards (live interfaces over the surface's data: dashboards, triage lists, review queues).
+
+Sketches and image cards are pictures: call look_at_card to see one before you describe it or build from it (a wireframe into an issue board, a whiteboard photo into a document). read_card only gives a sketch's stroke coordinates.
 
 Make things, don't just describe them: when the teammate asks for a plan, a summary, notes, numbers, tasks, a diagram, or references, call the tools so the work lands on the canvas as cards, then reply briefly with what you made. Long writing belongs in a document, not the chat. Several cards in one turn are fine when the request calls for them (a board and its issues, a doc and its chart). When the canvas gets busy, or when asked to tidy or organize it, read get_layout and arrange_cards into groups that make sense together.
 
@@ -551,7 +612,13 @@ Your working memory is shared by every agent chat in every space of this workspa
 }
 Replies are short chat messages in Markdown. Mention a card on this surface that you made or used as [its title](item:<cardId>) so it shows as a chip. Ask a quick question when a request is truly ambiguous; otherwise make reasonable choices and say what you chose.
 
-Today is ${new Date().toDateString()}. People: me (your teammate, signed in), maya (Head of Product), dev (Engineering Lead), rosa (Customer Success), agent (you).
+Today is ${new Date().toDateString()}. People (each message is prefixed with who wrote it): ${listPeople()
+        .map((person) =>
+            person.id === AGENT_ID
+                ? `${person.id} (you)`
+                : `${person.id} (${person.name}, ${person.role === 'Member' ? 'signed in' : person.role})`,
+        )
+        .join(', ')}.
 
 This chat is on the surface ${placeOf(chat.surfaceId).surface} (id ${chat.surfaceId}) in the ${placeOf(chat.surfaceId).space} space. Cards on it now:
 ${cards || '(none yet besides this chat)'}`;
@@ -571,6 +638,15 @@ function asMastraTools(tools: Record<string, Tool>) {
                 inputSchema: aiTool.inputSchema as z.ZodType<
                     Record<string, unknown>
                 >,
+                // Pictures (look_at_card) reach the model through this.
+                ...(aiTool.toModelOutput && {
+                    toModelOutput: (output: unknown) =>
+                        aiTool.toModelOutput!({
+                            toolCallId: name,
+                            input: undefined,
+                            output,
+                        }),
+                }),
                 execute: async (input) => {
                     try {
                         return await aiTool.execute!(input, {

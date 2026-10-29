@@ -79,6 +79,17 @@ function blocksText(blocks: DocumentBlock[]): string {
         .join(' ');
 }
 
+/** The words a UI card shows of its own (headings, labels), for search. */
+function uiText(spec: { elements: Record<string, unknown> }): string {
+    return Object.values(spec.elements)
+        .flatMap((element) =>
+            Object.values(
+                (element as { props?: Record<string, unknown> }).props ?? {},
+            ).filter((value): value is string => typeof value === 'string'),
+        )
+        .join(' ');
+}
+
 /** The entries an item contributes: itself, plus its messages or issues. */
 function entriesOf(item: SurfaceItem, { nameOf }: Options): Entry[] {
     const base = {
@@ -137,6 +148,8 @@ function entriesOf(item: SurfaceItem, { nameOf }: Options): Entry[] {
             return [own(item.text)];
         case 'sketch':
             return [own('')];
+        case 'ui':
+            return [own(uiText(item.spec))];
     }
 }
 

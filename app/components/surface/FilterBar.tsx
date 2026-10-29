@@ -14,6 +14,7 @@ import {
     ImageIcon,
     StickyNoteIcon,
     PaletteIcon,
+    LayoutDashboardIcon,
     type LucideIcon,
 } from 'lucide-react';
 import { cx } from 'cva.config';
@@ -62,6 +63,7 @@ const KINDS: { kind: SurfaceItemKind; label: string; icon: LucideIcon }[] = [
     { kind: 'image', label: 'Images', icon: ImageIcon },
     { kind: 'note', label: 'Notes', icon: StickyNoteIcon },
     { kind: 'sketch', label: 'Sketches', icon: PaletteIcon },
+    { kind: 'ui', label: 'UI', icon: LayoutDashboardIcon },
 ];
 
 type Props = {

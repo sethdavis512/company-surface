@@ -277,5 +277,7 @@ function summary(item: SurfaceItem): string {
             return item.text.replace(/\s+/g, ' ').trim() || 'Empty note';
         case 'sketch':
             return `${item.strokes.length} strokes`;
+        case 'ui':
+            return 'Live view of this surface';
     }
 }

@@ -16,6 +16,7 @@ describe('completeNavOrder', () => {
             'image',
             'note',
             'sketch',
+            'ui',
         ]);
     });
 

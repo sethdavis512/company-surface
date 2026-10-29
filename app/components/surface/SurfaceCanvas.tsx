@@ -37,10 +37,12 @@ import {
 import { ArrowLeftIcon, LayoutGridIcon } from 'lucide-react';
 import { cx } from 'cva.config';
 import { clusterLayout } from '~/lib/arrange';
+import type { CanvasSettings } from '~/lib/canvas-settings';
 import { createSurfaceSearch } from '~/lib/search';
-import { CanvasMenu } from './CanvasMenu';
+import { CanvasMenu, NOT_EMPTY } from './CanvasMenu';
 import { AddCardMenu } from './AddCardMenu';
 import { PresenceAvatars } from './PresenceAvatars';
+import { CanvasSettingsButton, useCanvasSettings } from './CanvasSettings';
 import { Button } from '~/components/ui/button';
 import {
     sizeOf,
@@ -69,6 +71,7 @@ import { NoteWindow, type NoteNode } from './NoteWindow';
 import { FloatingEdge } from './FloatingEdge';
 import { DELETE_FETCHER_KEY, DeleteCardProvider } from './DeleteCard';
 import { SketchWindow, type SketchNode } from './SketchWindow';
+import { UiWindow, type UiNode } from './UiWindow';
 import { ChartWindow, type ChartNode } from './ChartWindow';
 import { ChatWindow, type ChatNode } from './ChatWindow';
 import { DocumentWindow, type DocumentNode } from './DocumentWindow';
@@ -100,7 +103,8 @@ type SurfaceNode =
     | WebNode
     | ImageNode
     | NoteNode
-    | SketchNode;
+    | SketchNode
+    | UiNode;
 
 const edgeTypes = { floating: FloatingEdge } as EdgeTypes;
 
@@ -115,6 +119,7 @@ const nodeTypes = {
     image: ImageWindow,
     note: NoteWindow,
     sketch: SketchWindow,
+    ui: UiWindow,
 } as NodeTypes;
 
 /**
@@ -173,6 +178,8 @@ function toNode(
             return { ...base, type: 'note', data: { item } };
         case 'sketch':
             return { ...base, type: 'sketch', data: { item } };
+        case 'ui':
+            return { ...base, type: 'ui', data: { item } };
     }
 }
 
@@ -687,6 +694,8 @@ type Props = {
     onSearch: () => void;
     /** Everyone viewing the surface right now, you included. */
     present: Person[];
+    /** This person's canvas settings, from their cookie. */
+    canvasSettings: CanvasSettings;
 };
 
 export function SurfaceCanvas({
@@ -696,7 +705,18 @@ export function SurfaceCanvas({
     visitKey,
     onSearch,
     present,
+    canvasSettings,
 }: Props) {
+    const settings = useCanvasSettings(canvasSettings);
+    const flow = useFlow();
+    const canvasStyle = useMemo(
+        () =>
+            ({
+                ...CANVAS_STYLE,
+                '--trellis-edge-width': `${settings.linkWidth}px`,
+            }) as CSSProperties,
+        [settings.linkWidth],
+    );
     const links = useSurfaceLinks();
     const navigate = useNavigate();
     // Double-clicking a card's header (its title bar, not a button or field
@@ -758,6 +778,14 @@ export function SurfaceCanvas({
     }
     function removeLink(relationId: string) {
         linkFetch({ intent: 'unlink-cards', relationId });
+    }
+
+    // Double-clicking empty canvas zooms in a step, like the + button.
+    function handleCanvasDoubleClick(event: React.MouseEvent) {
+        const target = event.target as Element;
+        if (!event.currentTarget.contains(target)) return;
+        if (target.closest(NOT_EMPTY)) return;
+        flow.zoomIn({ duration: 150 });
     }
 
     // While a card is focused, a click on the canvas around it goes back.
@@ -1001,7 +1029,12 @@ export function SurfaceCanvas({
                                             }
                                             onRemoveLink={removeLink}
                                         >
-                                            <div className="size-full">
+                                            <div
+                                                className="size-full"
+                                                onDoubleClick={
+                                                    handleCanvasDoubleClick
+                                                }
+                                            >
                                                 <Flow
                                                     nodes={stackedNodes}
                                                     edges={shownEdges}
@@ -1033,7 +1066,7 @@ export function SurfaceCanvas({
                                                     }}
                                                     ariaLabel="Company surface"
                                                     className="size-full"
-                                                    style={CANVAS_STYLE}
+                                                    style={canvasStyle}
                                                 >
                                                     <Background />
                                                     {!isFocused && (
@@ -1090,22 +1123,34 @@ export function SurfaceCanvas({
                                                                     }
                                                                 />
                                                             </div>
-                                                            <PresenceAvatars
-                                                                people={present}
-                                                                meId={
-                                                                    surface.meId
-                                                                }
-                                                                className="shrink-0"
-                                                            />
+                                                            <div className="flex shrink-0 items-start gap-2">
+                                                                <PresenceAvatars
+                                                                    people={
+                                                                        present
+                                                                    }
+                                                                    meId={
+                                                                        surface.meId
+                                                                    }
+                                                                />
+                                                                <CanvasSettingsButton
+                                                                    {...settings}
+                                                                />
+                                                            </div>
                                                         </Panel>
                                                     )}
                                                     {isFocused && (
-                                                        <Panel position="top-right">
+                                                        <Panel
+                                                            position="top-right"
+                                                            className="flex items-start gap-2"
+                                                        >
                                                             <PresenceAvatars
                                                                 people={present}
                                                                 meId={
                                                                     surface.meId
                                                                 }
+                                                            />
+                                                            <CanvasSettingsButton
+                                                                {...settings}
                                                             />
                                                         </Panel>
                                                     )}

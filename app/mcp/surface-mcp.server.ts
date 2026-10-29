@@ -37,6 +37,8 @@ import {
     createImage,
     createNote,
     createSketch,
+    createUi,
+    updateUi,
     updateNote,
     setItemLocked,
     unlinkCards,
@@ -69,6 +71,8 @@ import {
     setItemColor,
     setPullRequestStatus,
 } from '~/models/surface.server';
+import { uiGuide, uiSpecInputSchema } from '~/lib/ui-card';
+import { pictureOf } from '~/models/card-picture.server';
 
 /**
  * The surface's agent tools. Agents act on the same store the app shows, so
@@ -110,7 +114,16 @@ function viewLink(view: { id: string; surfaceId: string }) {
     return `${env.BETTER_AUTH_BASE_URL}${viewPath(view.surfaceId, view.id)}`;
 }
 
-function result(value: unknown) {
+/** A tool's answer: text, and for a sketch, its picture. */
+type ToolContent = {
+    content: (
+        | { type: 'text'; text: string }
+        | { type: 'image'; data: string; mimeType: string }
+    )[];
+    isError?: boolean;
+};
+
+function result(value: unknown): ToolContent {
     return {
         content: [
             { type: 'text' as const, text: JSON.stringify(value, null, 2) },
@@ -118,10 +131,25 @@ function result(value: unknown) {
     };
 }
 
+/** A sketch's PNG as an MCP image, under its caption; anything else as JSON. */
+function pictureContent(value: unknown): ToolContent {
+    const { caption, png } = value as { caption?: string; png?: string };
+    if (!png) return result(value);
+    return {
+        content: [
+            { type: 'text' as const, text: caption ?? '' },
+            { type: 'image' as const, data: png, mimeType: 'image/png' },
+        ],
+    };
+}
+
 /** Runs a tool body, turning the store's expected errors into tool errors. */
-function run(body: () => unknown) {
+function run(
+    body: () => unknown,
+    format: (value: unknown) => ToolContent = result,
+): ToolContent {
     try {
-        return result(body());
+        return format(body());
     } catch (error) {
         if (error instanceof SurfaceError) {
             return {
@@ -298,6 +326,27 @@ export function createSurfaceMcpServer(): McpServer {
             annotations: { readOnlyHint: true },
         },
         ({ itemId }) => run(() => readable(getItem(itemId))),
+    );
+
+    server.registerTool(
+        'look_at_card',
+        {
+            title: 'Look at a card',
+            description:
+                "A sketch as a picture (PNG), or an image card's address and description: what it shows, which get_card cannot give (a sketch there is only stroke coordinates). Look before you describe or build from a drawing, wireframe, diagram, screenshot, or photo.",
+            inputSchema: { itemId: z.string() },
+            annotations: { readOnlyHint: true },
+        },
+        ({ itemId }) =>
+            run(() => {
+                const item = getItem(itemId);
+                const picture = pictureOf(item);
+                const caption = `${item.kind} "${item.title}" (${item.id})`;
+                if ('url' in picture) {
+                    return { caption, src: picture.url, alt: picture.alt };
+                }
+                return { caption, png: picture.data };
+            }, pictureContent),
     );
 
     server.registerTool(
@@ -896,6 +945,44 @@ export function createSurfaceMcpServer(): McpServer {
                     strokes: sketch.strokes.length,
                     url: link(sketch.id),
                 };
+            }),
+    );
+
+    server.registerTool(
+        'create_ui',
+        {
+            title: 'Add a UI card',
+            description: `Puts a UI card on a surface: a small live interface (a dashboard, a triage list, a review queue) composed from a fixed set of components and bound to the surface's own data, so it stays current. get_card returns a UI card's spec.\n\n${uiGuide()}`,
+            inputSchema: {
+                surfaceId: surfaceIdSchema,
+                title: z.string().min(1).max(120),
+                spec: uiSpecInputSchema,
+                authorId: authorSchema,
+            },
+        },
+        (input) =>
+            run(() => {
+                const ui = createUi(input);
+                return { id: ui.id, title: ui.title, url: link(ui.id) };
+            }),
+    );
+
+    server.registerTool(
+        'update_ui',
+        {
+            title: 'Change a UI card',
+            description:
+                "Replaces a UI card's spec (and optionally its title). Read it with get_card first. Same rules as create_ui.",
+            inputSchema: {
+                uiId: z.string(),
+                title: z.string().min(1).max(120).optional(),
+                spec: uiSpecInputSchema,
+            },
+        },
+        (input) =>
+            run(() => {
+                const ui = updateUi(input);
+                return { id: ui.id, title: ui.title, url: link(ui.id) };
             }),
     );
 

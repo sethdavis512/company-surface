@@ -319,6 +319,27 @@ export type SketchItem = {
     updatedAt: string;
 };
 
+/**
+ * A small interface an agent composed from the UI catalog (json-render; see
+ * `app/lib/ui-card.ts`): its spec says which components and where their
+ * values come from (the surface's own data, bound live).
+ */
+export type UiItem = {
+    kind: 'ui';
+    id: string;
+    /** The surface the card is on. */
+    surfaceId: string;
+    title: string;
+    /** A json-render spec: `{ root, elements, state? }`. */
+    spec: {
+        root: string;
+        elements: Record<string, unknown>;
+        state?: Record<string, unknown>;
+    };
+    createdById: string;
+    updatedAt: string;
+};
+
 /** A note's color when nobody picked one (the palette recolors it). */
 export const DEFAULT_NOTE_COLOR = 'amber';
 
@@ -332,7 +353,8 @@ export type SurfaceItem =
     | WebItem
     | ImageItem
     | NoteItem
-    | SketchItem;
+    | SketchItem
+    | UiItem;
 
 const YOUTUBE_ID = /^[\w-]{11}$/;
 
@@ -562,6 +584,8 @@ export const WINDOW_SIZES = {
     // inside (letterboxed) whatever its shape.
     image: { width: 360, height: 314 },
     note: { width: 240, height: 240 },
+    // Room for a row of metrics and a list beside the chats.
+    ui: { width: 640, height: 520 },
     // The 640x400 paper plus the toolbar above and palette below.
     sketch: { width: 640, height: 540 },
 } as const satisfies Record<SurfaceItemKind, { width: number; height: number }>;

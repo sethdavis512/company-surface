@@ -13,6 +13,7 @@ import {
     launchRetroSurface,
     type SeedSurface,
 } from './seed-surfaces.server';
+import { uiSpecProblems } from '~/lib/ui-card';
 import { markChanged } from './surface-events.server';
 import {
     markdownToPortableText,
@@ -41,6 +42,7 @@ import {
     type NoteItem,
     type SketchItem,
     type SketchStroke,
+    type UiItem,
     type WebItem,
     type ChartItem,
     type ChartPoint,
@@ -125,29 +127,43 @@ type Unplaced<T> = T extends unknown ? Omit<T, 'surfaceId'> : never;
 /** The seed's main surface: everything the app started with is on it. */
 export const SEED_SURFACE_ID = 'atlas-launch';
 
+/** What the agent says first in the chat every new surface starts with. */
+const AGENT_GREETING =
+    "Hi! I work on this surface with you. Ask me to draft a doc, chart some numbers, start an issue board, pin a note, sketch, or pull in a page, video, or image, and I'll put it on the canvas next to this chat.";
+
+/**
+ * The chat with the agent a surface starts with: whoever writes first
+ * joins, so it stays an agent chat (`isAgentChat`). Deletable like any card.
+ */
+function agentChat(surfaceId: string, id: string, sentAt: string): ChatItem {
+    return {
+        kind: 'chat',
+        id,
+        surfaceId,
+        title: 'Ask the agent',
+        participantIds: [AGENT_ID],
+        messages: [
+            {
+                id: `${id}-hello`,
+                authorId: AGENT_ID,
+                text: AGENT_GREETING,
+                sentAt,
+            },
+        ],
+        createdById: AGENT_ID,
+    };
+}
+
 /** A space with one live agent chat on it, to try the agent from scratch. */
 function playground(): {
     space: Space;
     surface: SurfaceRecord;
     chat: ChatItem;
 } {
-    const chat: ChatItem = {
-        kind: 'chat',
-        id: 'chat-agent',
-        surfaceId: 'agent-test-drive',
-        title: 'Ask the agent',
-        // Whoever writes first joins.
-        participantIds: [AGENT_ID],
-        messages: [
-            {
-                id: 'msg-agent-hello',
-                authorId: AGENT_ID,
-                text: "Hi! I work on this surface with you. Ask me to draft a doc, chart some numbers, start an issue board, pin a note, sketch, or pull in a page, video, or image, and I'll put it on the canvas next to this chat.",
-                sentAt: '2026-10-25T09:00:00Z',
-            },
-        ],
-        createdById: AGENT_ID,
+    const chat = {
+        ...agentChat('agent-test-drive', 'chat-agent', '2026-10-25T09:00:00Z'),
     };
+    chat.messages[0]!.id = 'msg-agent-hello';
     return {
         space: {
             id: 'playground',
@@ -1076,7 +1092,7 @@ export function createSpace({
     return structuredClone(space);
 }
 
-/** Starts a surface in a space, empty. */
+/** Starts a surface in a space, with a chat with the agent on it. */
 export function createSurface({
     spaceId,
     name,
@@ -1095,13 +1111,14 @@ export function createSurface({
         arrangement: emptyArrangement(),
     };
     store().surfaces.push(record);
+    addItem(agentChat(record.id, newId('chat'), new Date().toISOString()));
     return {
         id: record.id,
         spaceId,
         name,
         description,
-        cardCount: 0,
-        kinds: [],
+        cardCount: 1,
+        kinds: ['chat'],
     };
 }
 
@@ -1915,6 +1932,14 @@ export function addCard({
                 authorId,
             });
             break;
+        case 'ui':
+            item = createUi({
+                surfaceId,
+                title: named ?? 'Surface at a glance',
+                spec: STARTER_UI,
+                authorId,
+            });
+            break;
     }
     if (position && !attachedTo) {
         requireSurface(surfaceId).arrangement.positions[item.id] = {
@@ -2098,6 +2123,118 @@ export function createSketch({
     };
     addItem(sketch);
     return structuredClone(sketch);
+}
+
+/**
+ * A UI card a person adds by hand: this surface's numbers at a glance,
+ * bound live, for an agent (or anyone) to build on.
+ */
+const STARTER_UI: UiItem['spec'] = {
+    root: 'main',
+    elements: {
+        main: {
+            type: 'Stack',
+            props: { direction: null, gap: 'md' },
+            children: ['heading', 'metrics', 'hint'],
+        },
+        heading: {
+            type: 'Heading',
+            props: { text: 'This surface', level: null },
+        },
+        metrics: {
+            type: 'Grid',
+            props: { columns: 3 },
+            children: ['cards', 'issues', 'prs'],
+        },
+        cards: {
+            type: 'Metric',
+            props: {
+                label: 'Cards',
+                value: { $state: '/stats/cards' },
+                hint: null,
+            },
+        },
+        issues: {
+            type: 'Metric',
+            props: {
+                label: 'Open issues',
+                value: { $state: '/stats/openIssues' },
+                hint: null,
+            },
+        },
+        prs: {
+            type: 'Metric',
+            props: {
+                label: 'Open pull requests',
+                value: { $state: '/stats/openPullRequests' },
+                hint: null,
+            },
+        },
+        hint: {
+            type: 'Text',
+            props: {
+                text: 'Ask the agent to turn this into the view you need: a triage list, a review queue, a launch tracker.',
+                muted: true,
+            },
+        },
+    },
+};
+
+function requireUiSpec(spec: unknown): UiItem['spec'] {
+    const problems = uiSpecProblems(spec);
+    if (problems.length > 0) {
+        throw new SurfaceError(
+            `That UI spec doesn't work: ${problems.slice(0, 5).join('; ')}`,
+        );
+    }
+    return structuredClone(spec as UiItem['spec']);
+}
+
+/** Puts a UI card (a json-render spec over the UI catalog) on a surface. */
+export function createUi({
+    surfaceId,
+    title,
+    spec,
+    authorId = AGENT_ID,
+}: {
+    surfaceId: string;
+    title: string;
+    spec: unknown;
+    authorId?: string;
+}): UiItem {
+    requireSurface(surfaceId);
+    requireKnownPeople([authorId]);
+    const ui: UiItem = {
+        kind: 'ui',
+        id: newId('ui'),
+        surfaceId,
+        title: title.slice(0, TITLE_MAX),
+        spec: requireUiSpec(spec),
+        createdById: authorId,
+        updatedAt: new Date().toISOString(),
+    };
+    addItem(ui);
+    return structuredClone(ui);
+}
+
+/** Replaces a UI card's spec (last writer wins, like a sketch). */
+export function updateUi({
+    uiId,
+    spec,
+    title,
+}: {
+    uiId: string;
+    spec: unknown;
+    title?: string;
+}): UiItem {
+    const ui = requireItem(uiId);
+    if (ui.kind !== 'ui') {
+        throw new SurfaceError(`"${uiId}" is a ${ui.kind}, not a UI card.`);
+    }
+    ui.spec = requireUiSpec(spec);
+    if (title) ui.title = title.slice(0, TITLE_MAX);
+    ui.updatedAt = nextTimestamp(ui.updatedAt);
+    return structuredClone(ui);
 }
 
 /** Replaces a sketch's strokes (the whole drawing, as the canvas holds it). */

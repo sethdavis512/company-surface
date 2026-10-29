@@ -8,6 +8,8 @@ import {
     AGENT_ID,
     SurfaceError,
     listLinks,
+    createUi,
+    updateUi,
     listPeople,
     rememberPerson,
     surfaceVersion,
@@ -592,6 +594,45 @@ describe('surface store', () => {
         for (const [id, spot] of Object.entries(moved)) {
             expect(after.arrangement.positions[id]).toEqual(spot);
         }
+    });
+
+    it('keeps UI cards only when their spec can be drawn', () => {
+        const spec = {
+            root: 'm',
+            elements: {
+                m: {
+                    type: 'Metric',
+                    props: {
+                        label: 'Open',
+                        value: { $state: '/stats/openIssues' },
+                        hint: null,
+                    },
+                },
+            },
+        };
+        const ui = createUi({
+            surfaceId: SEED_SURFACE_ID,
+            title: 'Glance',
+            spec,
+        });
+        expect(getItem(ui.id)).toMatchObject({ kind: 'ui', spec });
+        expect(() =>
+            createUi({
+                surfaceId: SEED_SURFACE_ID,
+                title: 'Bad',
+                spec: { root: 'x', elements: {} },
+            }),
+        ).toThrow(SurfaceError);
+        const changed = updateUi({
+            uiId: ui.id,
+            title: 'Glance 2',
+            spec: { ...spec, state: { ui: { tab: 'a' } } },
+        });
+        expect(changed.title).toBe('Glance 2');
+        expect(changed.updatedAt > ui.updatedAt).toBe(true);
+        expect(() => updateUi({ uiId: 'doc-brief', spec })).toThrow(
+            /not a UI card/,
+        );
     });
 
     it('will not arrange items that do not exist', () => {

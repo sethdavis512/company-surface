@@ -21,6 +21,13 @@ async function freshSurface(page: Page) {
         spaceId: 'design',
         name: `Controls ${crypto.randomUUID().slice(0, 6)}`,
     });
+    // A new surface starts with a chat with the agent; this test wants an
+    // empty canvas.
+    for (const card of await mcp(page, 'list_cards', {
+        surfaceId: surface.id,
+    })) {
+        await mcp(page, 'delete_card', { itemId: card.id });
+    }
     return surface as { id: string };
 }
 

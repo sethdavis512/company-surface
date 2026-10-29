@@ -269,3 +269,13 @@
         color: var(--foreground);
     }
 }
+
+/*
+ * Link labels ("made", "related") sit under the cards, not over them:
+ * Trellis stacks its label layer above its nodes. Unlayered and more
+ * specific than Trellis's own (also unlayered) rule, so it wins wherever
+ * the stylesheets load. Labels still sit above the lines themselves.
+ */
+.trellis .trellis__edge-labels {
+    z-index: 0;
+}
