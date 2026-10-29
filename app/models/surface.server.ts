@@ -64,6 +64,9 @@ import {
     hangingUnder,
     parentIdOf,
     isRenamable,
+    clampSize,
+    isResizable,
+    type CardSize,
 } from '~/lib/surface';
 
 /**
@@ -2020,6 +2023,35 @@ export function renameItem({
         throw new SurfaceError(`A title needs 1 to ${TITLE_MAX} characters.`);
     }
     item.title = trimmed;
+    return structuredClone(item);
+}
+
+/**
+ * Resizes a card (chats, so far: `RESIZE_LIMITS`), clamped to its kind's
+ * limits; that size becomes where it rests. `position` is its top left
+ * corner afterwards, saved when given, since dragging a left or top edge
+ * moves the card. Leaves `updatedAt` alone, as renaming does.
+ */
+export function resizeItem({
+    itemId,
+    size,
+    position,
+}: {
+    itemId: string;
+    size: CardSize;
+    position?: { x: number; y: number };
+}): SurfaceItem {
+    const item = requireItem(itemId);
+    if (!isResizable(item.kind) || item.kind !== 'chat') {
+        throw new SurfaceError(`A ${item.kind} card can't be resized.`);
+    }
+    item.size = clampSize(item.kind, size);
+    if (position) {
+        arrangementOf(itemId).positions[itemId] = {
+            x: Math.round(position.x),
+            y: Math.round(position.y),
+        };
+    }
     return structuredClone(item);
 }
 

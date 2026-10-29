@@ -93,6 +93,26 @@ describe('/api/mcp', () => {
         expect(old.title).toBe('Atlas launch brief');
     });
 
+    it('resizes chats, clamped, and refuses other cards', async () => {
+        const resized = await callTool('resize_card', {
+            itemId: 'chat-launch',
+            width: 5000,
+            height: 700,
+        });
+        expect(JSON.parse(resized.content[0]!.text)).toEqual({
+            id: 'chat-launch',
+            kind: 'chat',
+            width: 1138,
+            height: 700,
+        });
+        const refused = await callTool('resize_card', {
+            itemId: 'doc-brief',
+            width: 1000,
+            height: 600,
+        });
+        expect(refused.isError).toBe(true);
+    });
+
     it('creates a document an agent can then read back', async () => {
         const created = await callTool('create_document', {
             surfaceId: 'atlas-launch',

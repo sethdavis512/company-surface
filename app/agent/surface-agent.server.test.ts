@@ -11,7 +11,12 @@ import {
     resetSurface,
 } from '~/models/surface.server';
 import type { SessionUser } from '~/context';
-import { chatHistory, replyText, surfaceTools } from './surface-agent.server';
+import {
+    chatHistory,
+    readableToolError,
+    replyText,
+    surfaceTools,
+} from './surface-agent.server';
 
 const CHAT_ID = 'chat-agent';
 const SURFACE_ID = 'agent-test-drive';
@@ -149,10 +154,67 @@ describe('surfaceTools', () => {
         });
     });
 
-    it('never reaches cards on other surfaces', async () => {
-        expect(() =>
-            tools().read_card.execute!({ cardId: 'doc-brief' }, options),
-        ).toThrow(/another surface/);
+    it('reads other surfaces, saying where a card lives', async () => {
+        const brief = (await tools().read_card.execute!(
+            { cardId: 'doc-brief' },
+            options,
+        )) as unknown as {
+            id: string;
+            markdown: string;
+            surface: string;
+            space: string;
+        };
+        expect(brief).toMatchObject({
+            id: 'doc-brief',
+            surface: 'Atlas launch',
+            space: 'Product',
+        });
+        expect(brief.markdown).toContain('Timeline');
+
+        const own = (await tools().read_card.execute!(
+            { cardId: CHAT_ID },
+            options,
+        )) as Record<string, unknown>;
+        expect(own).not.toHaveProperty('surface');
+    });
+
+    it('lists spaces and other surfaces’ cards', async () => {
+        const { spaces } = (await tools().list_spaces.execute!(
+            {},
+            options,
+        )) as { spaces: { name: string; surfaces: { id: string }[] }[] };
+        expect(spaces.map(({ name }) => name)).toContain('Customers');
+        expect(spaces.flatMap(({ surfaces }) => surfaces)).toContainEqual(
+            expect.objectContaining({ id: 'northwind' }),
+        );
+
+        const { cards } = (await tools().list_cards.execute!(
+            { surfaceId: 'northwind' },
+            options,
+        )) as { cards: { id: string }[] };
+        expect(cards.map(({ id }) => id)).toEqual(['doc-northwind-plan']);
+    });
+
+    it('searches this surface, or everywhere when asked', async () => {
+        const here = (await tools().search.execute!(
+            { query: 'Northwind' },
+            options,
+        )) as { hits: unknown[] };
+        expect(here.hits).toEqual([]);
+
+        const everywhere = (await tools().search.execute!(
+            { query: 'Northwind', everywhere: true },
+            options,
+        )) as { hits: { id: string; surface?: string }[] };
+        expect(everywhere.hits).toContainEqual(
+            expect.objectContaining({
+                id: 'doc-northwind-plan',
+                surface: 'Northwind',
+            }),
+        );
+    });
+
+    it('never changes cards on other surfaces', () => {
         const before = allItems().length;
         expect(() =>
             tools().create_chart.execute!(
@@ -169,7 +231,14 @@ describe('surfaceTools', () => {
                 options,
             ),
         ).toThrow(/another surface/);
+        expect(() =>
+            tools().rename_card.execute!(
+                { cardId: 'doc-brief', title: 'Mine now' },
+                options,
+            ),
+        ).toThrow(/another surface/);
         expect(allItems()).toHaveLength(before);
+        expect(getItem('doc-brief').title).not.toBe('Mine now');
     });
 });
 
@@ -295,5 +364,40 @@ describe('layout tools', () => {
                 options,
             ),
         ).toThrow(/Not on this surface/);
+    });
+});
+
+describe('readableToolError', () => {
+    it("pulls the thrown message out of Mastra's error", () => {
+        const mastraError = JSON.stringify({
+            name: 'Error',
+            cause: {
+                message:
+                    '"pr-api-freeze" is on another surface; documents link to cards on their own surface.',
+            },
+            id: 'TOOL_EXECUTION_FAILED',
+            domain: 'TOOL',
+            category: 'USER',
+            details: {
+                errorMessage:
+                    'Error: "pr-api-freeze" is on another surface; documents link to cards on their own surface.',
+                model: 'claude-sonnet-5-5',
+            },
+        });
+        expect(readableToolError(mastraError)).toBe(
+            '"pr-api-freeze" is on another surface; documents link to cards on their own surface.',
+        );
+    });
+
+    it('falls back to details, then the text as given', () => {
+        expect(
+            readableToolError(
+                JSON.stringify({ details: { errorMessage: 'Error: Nope' } }),
+            ),
+        ).toBe('Nope');
+        expect(readableToolError('No issue "X-1" on that board.')).toBe(
+            'No issue "X-1" on that board.',
+        );
+        expect(readableToolError('42')).toBe('42');
     });
 });

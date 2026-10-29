@@ -1,9 +1,12 @@
 import { createAnthropic } from '@ai-sdk/anthropic';
+import { Agent } from '@mastra/core/agent';
+import { createTool } from '@mastra/core/tools';
+import type { Memory } from '@mastra/memory';
 import {
-    ToolLoopAgent,
-    stepCountIs,
     tool,
-    type InferAgentUIMessage,
+    type InferUITools,
+    type Tool,
+    type UIDataTypes,
     type UIMessage,
 } from 'ai';
 import { z } from 'zod';
@@ -30,6 +33,7 @@ import {
     SurfaceError,
     allItems,
     appendToDocument,
+    getWorkspace,
     arrangeCards,
     createBoard,
     createChart,
@@ -53,10 +57,11 @@ import {
 import { markChanged } from '~/models/surface-events.server';
 
 /**
- * The live agent behind agent chats (`isAgentChat`): Claude, through the AI
- * SDK, with tools that act on the chat's own surface. Whatever it makes
- * lands on the canvas like anything an MCP agent makes, and its replies are
- * saved in the chat with their tool calls (`parts`), so the transcript
+ * The live agent behind agent chats (`isAgentChat`): Claude, run by Mastra,
+ * with tools that read the whole workspace and act on the chat's own surface,
+ * and the workspace's memory (`app/mastra/workspace-memory.ts`). Whatever it
+ * makes lands on the canvas like anything an MCP agent makes, and its replies
+ * are saved in the chat with their tool calls (`parts`), so the transcript
  * survives reloads and other tabs see it.
  */
 
@@ -83,6 +88,15 @@ const markdownSchema = z
     .describe(
         'Markdown: paragraphs, ## and ### headings, - and 1. lists, > quotes, | pipe | tables | (a `| --- |` line under the header row), **bold**, *italic*, `code`, [text](https://...) links. Point at another card with [text](item:<cardId>), or put a card for one on a line of its own with ![](item:<cardId>).',
     );
+
+/** Where a card lives, for cards found outside this surface. */
+function placeOf(surfaceId: string) {
+    for (const space of getWorkspace().spaces) {
+        const surface = space.surfaces.find(({ id }) => id === surfaceId);
+        if (surface) return { surface: surface.name, space: space.name };
+    }
+    return { surface: surfaceId, space: '' };
+}
 
 const attachedToSchema = z
     .string()
@@ -127,45 +141,81 @@ export function surfaceTools({
     }
 
     return {
-        list_cards: tool({
+        list_spaces: tool({
             description:
-                'Every card on this surface: id, kind, and title. Call it before referring to cards you have not seen this turn.',
+                'Every space in the workspace and the surfaces in each: id, name, description, and how many cards. Other surfaces are yours to read, not change.',
             inputSchema: z.object({}),
             execute: () => ({
+                spaces: getWorkspace().spaces.map((space) => ({
+                    id: space.id,
+                    name: space.name,
+                    description: space.description,
+                    surfaces: space.surfaces.map((surface) => ({
+                        id: surface.id,
+                        name: surface.name,
+                        description: surface.description,
+                        cardCount: surface.cardCount,
+                    })),
+                })),
+            }),
+        }),
+        list_cards: tool({
+            description:
+                'Every card on a surface (this one unless you name another): id, kind, and title. Call it before referring to cards you have not seen this turn.',
+            inputSchema: z.object({
+                surfaceId: z
+                    .string()
+                    .optional()
+                    .describe('Another surface to list (see list_spaces).'),
+            }),
+            execute: ({ surfaceId: listed = surfaceId }) => ({
                 cards: allItems()
-                    .filter((item) => item.surfaceId === surfaceId)
+                    .filter((item) => item.surfaceId === listed)
                     .map(ref),
             }),
         }),
         read_card: tool({
             description:
-                "One card in full: a document's Markdown, a chat's recent messages, a board's issues, a chart's numbers, and so on.",
+                "One card in full, on any surface: a document's Markdown, a chat's recent messages, a board's issues, a chart's numbers, and so on.",
             inputSchema: z.object({ cardId: z.string() }),
-            execute: ({ cardId }) => readable(onSurface(cardId)),
+            execute: ({ cardId }) => {
+                const item = getItem(cardId);
+                return item.surfaceId === surfaceId
+                    ? readable(item)
+                    : { ...readable(item), ...placeOf(item.surfaceId) };
+            },
         }),
         search: tool({
             description:
-                "Finds cards on this surface by what's in them (titles, messages, document text, issues, captions). Every word must match; prefixes and small typos are fine.",
+                "Finds cards by what's in them (titles, messages, document text, issues, captions), on this surface or, with everywhere, across every space. Every word must match; prefixes and small typos are fine.",
             inputSchema: z.object({
                 query: z.string().min(1).max(200),
+                everywhere: z
+                    .boolean()
+                    .optional()
+                    .describe('Search every surface in the workspace.'),
             }),
-            execute: ({ query }) => {
+            execute: ({ query, everywhere = false }) => {
                 const people = new Map(
                     listPeople().map((person) => [person.id, person.name]),
                 );
                 const items = allItems().filter(
-                    (item) => item.surfaceId === surfaceId,
+                    (item) => everywhere || item.surfaceId === surfaceId,
+                );
+                const surfaceOf = new Map(
+                    items.map((item) => [item.id, item.surfaceId]),
                 );
                 const { hits } = createSurfaceSearch(items, {
                     nameOf: (id) => people.get(id),
                 }).search(query, 10);
                 return {
-                    hits: hits.map(({ itemId, kind, title, snippet }) => ({
-                        id: itemId,
-                        kind,
-                        title,
-                        snippet,
-                    })),
+                    hits: hits.map(({ itemId, kind, title, snippet }) => {
+                        const hit = { id: itemId, kind, title, snippet };
+                        const at = surfaceOf.get(itemId)!;
+                        return at === surfaceId
+                            ? hit
+                            : { ...hit, ...placeOf(at) };
+                    }),
                 };
             },
         }),
@@ -481,7 +531,7 @@ function readable(item: SurfaceItem) {
     }
 }
 
-function instructions(chat: ChatItem): string {
+function instructions(chat: ChatItem, { remembers }: { remembers: boolean }) {
     const cards = allItems()
         .filter((item) => item.surfaceId === chat.surfaceId)
         .slice(0, 80)
@@ -491,29 +541,79 @@ function instructions(chat: ChatItem): string {
 
 Make things, don't just describe them: when the teammate asks for a plan, a summary, notes, numbers, tasks, a diagram, or references, call the tools so the work lands on the canvas as cards, then reply briefly with what you made. Long writing belongs in a document, not the chat. Several cards in one turn are fine when the request calls for them (a board and its issues, a doc and its chart). When the canvas gets busy, or when asked to tidy or organize it, read get_layout and arrange_cards into groups that make sense together.
 
-Replies are short chat messages in Markdown. Mention a card you made or used as [its title](item:<cardId>) so it shows as a chip. Ask a quick question when a request is truly ambiguous; otherwise make reasonable choices and say what you chose.
+You can read the whole workspace: list_spaces, then list_cards, read_card, or search with everywhere on other surfaces, when a question reaches beyond this surface (another team's plans, a customer's account). You can only make or change cards on this surface; say where you found anything from elsewhere. Card links ([title](item:<cardId>)) only work for cards on this surface: name a card from elsewhere in plain text with its surface, e.g. "Northwind account plan (on Northwind)".
+${
+    remembers
+        ? `
+Your working memory is shared by every agent chat in every space of this workspace. When you learn a durable fact about the company (who someone is or what they own, a customer's situation, a project's goal or date, a decision, what a term means), save it there, briefly. Don't save chit-chat, things that matter only in this chat, or anything secret (passwords, keys, personal data beyond names and roles). Use what you remember, and say so when it matters.
+`
+        : ''
+}
+Replies are short chat messages in Markdown. Mention a card on this surface that you made or used as [its title](item:<cardId>) so it shows as a chip. Ask a quick question when a request is truly ambiguous; otherwise make reasonable choices and say what you chose.
 
 Today is ${new Date().toDateString()}. People: me (your teammate, signed in), maya (Head of Product), dev (Engineering Lead), rosa (Customer Success), agent (you).
 
-Cards on this surface now:
+This chat is on the surface ${placeOf(chat.surfaceId).surface} (id ${chat.surfaceId}) in the ${placeOf(chat.surfaceId).space} space. Cards on it now:
 ${cards || '(none yet besides this chat)'}`;
 }
 
-export function createSurfaceAgent(chat: ChatItem) {
+/**
+ * AI SDK tools as Mastra tools, under the same names, so the reply's tool
+ * parts (`tool-<name>`) are the ones the chat renders.
+ */
+function asMastraTools(tools: Record<string, Tool>) {
+    return Object.fromEntries(
+        Object.entries(tools).map(([name, aiTool]) => [
+            name,
+            createTool({
+                id: name,
+                description: aiTool.description ?? name,
+                inputSchema: aiTool.inputSchema as z.ZodType<
+                    Record<string, unknown>
+                >,
+                execute: async (input) => {
+                    try {
+                        return await aiTool.execute!(input, {
+                            toolCallId: name,
+                            messages: [],
+                        });
+                    } finally {
+                        // Cards it made or moved reach every open canvas
+                        // as it goes, not only when the turn ends.
+                        markChanged();
+                    }
+                },
+            }),
+        ]),
+    );
+}
+
+/**
+ * One turn's agent. With the workspace memory (null while its database is
+ * unreachable) it also reads and updates the workspace's working memory.
+ */
+export function createSurfaceAgent(chat: ChatItem, memory: Memory | null) {
     const anthropic = createAnthropic({ apiKey: env.ANTHROPIC_API_KEY });
-    return new ToolLoopAgent({
+    return new Agent({
+        id: 'surface-agent',
+        name: 'Surface Agent',
         model: anthropic(AGENT_MODEL),
-        instructions: instructions(chat),
-        tools: surfaceTools({ surfaceId: chat.surfaceId, chatId: chat.id }),
-        stopWhen: stepCountIs(AGENT_LIMITS.steps),
-        maxOutputTokens: AGENT_LIMITS.maxOutputTokens,
-        // Cards its tools made or moved reach every open canvas as it goes.
-        onStepFinish: () => markChanged(),
+        instructions: instructions(chat, { remembers: Boolean(memory) }),
+        tools: asMastraTools(
+            surfaceTools({ surfaceId: chat.surfaceId, chatId: chat.id }),
+        ),
+        ...(memory && { memory }),
+        defaultOptions: {
+            maxSteps: AGENT_LIMITS.steps,
+            modelSettings: { maxOutputTokens: AGENT_LIMITS.maxOutputTokens },
+        },
     });
 }
 
-export type SurfaceAgentUIMessage = InferAgentUIMessage<
-    ReturnType<typeof createSurfaceAgent>
+export type SurfaceAgentUIMessage = UIMessage<
+    unknown,
+    UIDataTypes,
+    InferUITools<ReturnType<typeof surfaceTools>>
 >;
 
 /**
@@ -545,6 +645,36 @@ export function chatHistory(chat: ChatItem): UIMessage[] {
                   ],
               },
     );
+}
+
+/**
+ * A failed tool call's message, as the chat shows it. Mastra reports tool
+ * errors as a serialized error object (`TOOL_EXECUTION_FAILED`, with the
+ * thrown error as its `cause`); the chat wants the thrown message alone.
+ */
+export function readableToolError(errorText: string): string {
+    let parsed: unknown;
+    try {
+        parsed = JSON.parse(errorText);
+    } catch {
+        return errorText;
+    }
+    if (!parsed || typeof parsed !== 'object') return errorText;
+    const error = parsed as {
+        message?: unknown;
+        cause?: { message?: unknown };
+        details?: { errorMessage?: unknown };
+    };
+    for (const message of [
+        error.cause?.message,
+        error.details?.errorMessage,
+        error.message,
+    ]) {
+        if (typeof message === 'string' && message.trim()) {
+            return message.replace(/^Error:\s*/, '');
+        }
+    }
+    return errorText;
 }
 
 /** The words of a reply, for search and anything that shows text alone. */

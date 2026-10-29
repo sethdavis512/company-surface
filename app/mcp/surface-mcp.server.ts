@@ -12,10 +12,12 @@ import {
     ISSUE_STATUSES,
     SKETCH_COLORS,
     SKETCH_SIZE,
+    RESIZE_LIMITS,
     TITLE_MAX,
     WINDOW_COLOR_NAMES,
     frameItems,
     itemPath,
+    sizeOf,
     surfacePath,
     viewPath,
     type SurfaceItem,
@@ -41,6 +43,7 @@ import {
     commentOnIssue,
     duplicateItem,
     renameItem,
+    resizeItem,
     deleteItem,
     createWebPage,
     navigateWebPage,
@@ -772,6 +775,24 @@ export function createSurfaceMcpServer(): McpServer {
             run(() => {
                 const item = renameItem(input);
                 return { id: item.id, kind: item.kind, title: item.title };
+            }),
+    );
+
+    server.registerTool(
+        'resize_card',
+        {
+            title: 'Resize a card',
+            description: `Sets a card's size in px; it rests at that size (Arrange and get_layout use it). Only chats resize, from ${RESIZE_LIMITS.chat.min.width}x${RESIZE_LIMITS.chat.min.height} (their usual size) to ${RESIZE_LIMITS.chat.max.width}x${RESIZE_LIMITS.chat.max.height}; sizes outside that are clamped. Its top left corner stays put.`,
+            inputSchema: {
+                itemId: z.string(),
+                width: z.number().positive(),
+                height: z.number().positive(),
+            },
+        },
+        ({ itemId, width, height }) =>
+            run(() => {
+                const item = resizeItem({ itemId, size: { width, height } });
+                return { id: item.id, kind: item.kind, ...sizeOf(item) };
             }),
     );
 

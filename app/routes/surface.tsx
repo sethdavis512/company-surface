@@ -65,6 +65,7 @@ import {
     commentOnIssue,
     duplicateItem,
     renameItem,
+    resizeItem,
     deleteItem,
     navigateWebPage,
     resetWindowPositions,
@@ -277,6 +278,14 @@ const intentSchema = z.discriminatedUnion('intent', [
         intent: z.literal('rename-card'),
         itemId: z.string().min(1),
         title: z.string().trim().min(1).max(TITLE_MAX),
+    }),
+    z.object({
+        intent: z.literal('resize-card'),
+        itemId: z.string().min(1),
+        width: z.coerce.number().finite().positive(),
+        height: z.coerce.number().finite().positive(),
+        x: z.coerce.number().finite().optional(),
+        y: z.coerce.number().finite().optional(),
     }),
     z.object({
         intent: z.literal('duplicate'),
@@ -528,6 +537,15 @@ async function applyIntent({ request, context, params }: Route.ActionArgs) {
             deleteItem(input.itemId);
         } else if (input.intent === 'rename-card') {
             renameItem({ itemId: input.itemId, title: input.title });
+        } else if (input.intent === 'resize-card') {
+            resizeItem({
+                itemId: input.itemId,
+                size: { width: input.width, height: input.height },
+                position:
+                    input.x === undefined || input.y === undefined
+                        ? undefined
+                        : { x: input.x, y: input.y },
+            });
         } else if (input.intent === 'duplicate') {
             duplicateItem({
                 itemId: input.itemId,
