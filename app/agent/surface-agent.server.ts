@@ -540,7 +540,7 @@ function instructions(chat: ChatItem, { remembers }: { remembers: boolean }) {
 
 Make things, don't just describe them: when the teammate asks for a plan, a summary, notes, numbers, tasks, a diagram, or references, call the tools so the work lands on the canvas as cards, then reply briefly with what you made. Long writing belongs in a document, not the chat. Several cards in one turn are fine when the request calls for them (a board and its issues, a doc and its chart). When the canvas gets busy, or when asked to tidy or organize it, read get_layout and arrange_cards into groups that make sense together.
 
-You can read the whole workspace: list_spaces, then list_cards, read_card, or search with everywhere on other surfaces, when a question reaches beyond this surface (another team's plans, a customer's account). You can only make or change cards on this surface; say where you found anything from elsewhere.
+You can read the whole workspace: list_spaces, then list_cards, read_card, or search with everywhere on other surfaces, when a question reaches beyond this surface (another team's plans, a customer's account). You can only make or change cards on this surface; say where you found anything from elsewhere. Card links ([title](item:<cardId>)) only work for cards on this surface: name a card from elsewhere in plain text with its surface, e.g. "Northwind account plan (on Northwind)".
 ${
     remembers
         ? `
@@ -548,7 +548,7 @@ Your working memory is shared by every agent chat in every space of this workspa
 `
         : ''
 }
-Replies are short chat messages in Markdown. Mention a card you made or used as [its title](item:<cardId>) so it shows as a chip. Ask a quick question when a request is truly ambiguous; otherwise make reasonable choices and say what you chose.
+Replies are short chat messages in Markdown. Mention a card on this surface that you made or used as [its title](item:<cardId>) so it shows as a chip. Ask a quick question when a request is truly ambiguous; otherwise make reasonable choices and say what you chose.
 
 Today is ${new Date().toDateString()}. People: me (your teammate, signed in), maya (Head of Product), dev (Engineering Lead), rosa (Customer Success), agent (you).
 
@@ -637,6 +637,36 @@ export function chatHistory(chat: ChatItem): UIMessage[] {
                   ],
               },
     );
+}
+
+/**
+ * A failed tool call's message, as the chat shows it. Mastra reports tool
+ * errors as a serialized error object (`TOOL_EXECUTION_FAILED`, with the
+ * thrown error as its `cause`); the chat wants the thrown message alone.
+ */
+export function readableToolError(errorText: string): string {
+    let parsed: unknown;
+    try {
+        parsed = JSON.parse(errorText);
+    } catch {
+        return errorText;
+    }
+    if (!parsed || typeof parsed !== 'object') return errorText;
+    const error = parsed as {
+        message?: unknown;
+        cause?: { message?: unknown };
+        details?: { errorMessage?: unknown };
+    };
+    for (const message of [
+        error.cause?.message,
+        error.details?.errorMessage,
+        error.message,
+    ]) {
+        if (typeof message === 'string' && message.trim()) {
+            return message.replace(/^Error:\s*/, '');
+        }
+    }
+    return errorText;
 }
 
 /** The words of a reply, for search and anything that shows text alone. */

@@ -10,7 +10,12 @@ import {
     resetSurface,
 } from '~/models/surface.server';
 import type { SessionUser } from '~/context';
-import { chatHistory, replyText, surfaceTools } from './surface-agent.server';
+import {
+    chatHistory,
+    readableToolError,
+    replyText,
+    surfaceTools,
+} from './surface-agent.server';
 
 const CHAT_ID = 'chat-agent';
 const SURFACE_ID = 'agent-test-drive';
@@ -340,5 +345,40 @@ describe('layout tools', () => {
                 options,
             ),
         ).toThrow(/Not on this surface/);
+    });
+});
+
+describe('readableToolError', () => {
+    it("pulls the thrown message out of Mastra's error", () => {
+        const mastraError = JSON.stringify({
+            name: 'Error',
+            cause: {
+                message:
+                    '"pr-api-freeze" is on another surface; documents link to cards on their own surface.',
+            },
+            id: 'TOOL_EXECUTION_FAILED',
+            domain: 'TOOL',
+            category: 'USER',
+            details: {
+                errorMessage:
+                    'Error: "pr-api-freeze" is on another surface; documents link to cards on their own surface.',
+                model: 'claude-sonnet-5-5',
+            },
+        });
+        expect(readableToolError(mastraError)).toBe(
+            '"pr-api-freeze" is on another surface; documents link to cards on their own surface.',
+        );
+    });
+
+    it('falls back to details, then the text as given', () => {
+        expect(
+            readableToolError(
+                JSON.stringify({ details: { errorMessage: 'Error: Nope' } }),
+            ),
+        ).toBe('Nope');
+        expect(readableToolError('No issue "X-1" on that board.')).toBe(
+            'No issue "X-1" on that board.',
+        );
+        expect(readableToolError('42')).toBe('42');
     });
 });

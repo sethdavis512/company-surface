@@ -10,6 +10,7 @@ import { z } from 'zod';
 import {
     chatHistory,
     createSurfaceAgent,
+    readableToolError,
     replyText,
     type SurfaceAgentUIMessage,
 } from '~/agent/surface-agent.server';
@@ -137,7 +138,25 @@ export async function action({ request, context }: Route.ActionArgs) {
     const stream = createUIMessageStream<SurfaceAgentUIMessage>({
         execute: ({ writer }) => {
             writer.merge(
-                toAISdkStream(result, { from: 'agent', version: 'v6' }),
+                toAISdkStream(result, {
+                    from: 'agent',
+                    version: 'v6',
+                }).pipeThrough(
+                    new TransformStream({
+                        transform(chunk, controller) {
+                            controller.enqueue(
+                                chunk.type === 'tool-output-error'
+                                    ? {
+                                          ...chunk,
+                                          errorText: readableToolError(
+                                              chunk.errorText,
+                                          ),
+                                      }
+                                    : chunk,
+                            );
+                        },
+                    }),
+                ),
             );
         },
         generateId,
