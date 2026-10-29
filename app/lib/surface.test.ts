@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest';
 import {
     WINDOW_GAP,
     WINDOW_SIZES,
+    clampSize,
+    resizeBox,
+    sizeOf,
     completeStack,
     restack,
     viewCenter,
@@ -369,5 +372,66 @@ describe('placeWindows column widths', () => {
         // The page (960) hangs under chat a (360): chat b starts past it.
         expect(spot('b').x).toBe(WINDOW_SIZES.web.width + WINDOW_GAP);
         expect(spot('page').x).toBe(spot('a').x);
+    });
+});
+
+describe('resizing', () => {
+    it('keeps chats between their resting size and a 16:9-wide box', () => {
+        expect(clampSize('chat', { width: 10, height: 10 })).toEqual({
+            width: 360,
+            height: 640,
+        });
+        expect(clampSize('chat', { width: 5000, height: 5000 })).toEqual({
+            width: 1138,
+            height: 1138,
+        });
+        expect(clampSize('chat', { width: 480.6, height: 700.2 })).toEqual({
+            width: 481,
+            height: 700,
+        });
+    });
+
+    const start = { x: 100, y: 50, width: 400, height: 700 };
+
+    it('grows from the right and bottom without moving the card', () => {
+        expect(
+            resizeBox(
+                'chat',
+                start,
+                { x: 'right', y: 'bottom' },
+                { x: 60, y: 30 },
+            ),
+        ).toEqual({ x: 100, y: 50, width: 460, height: 730 });
+        // One edge only moves one dimension.
+        expect(
+            resizeBox('chat', start, { x: 'right' }, { x: 60, y: 30 }),
+        ).toEqual({ x: 100, y: 50, width: 460, height: 700 });
+    });
+
+    it('keeps the opposite edges put when dragging left or top', () => {
+        expect(
+            resizeBox(
+                'chat',
+                start,
+                { x: 'left', y: 'top' },
+                { x: -60, y: -30 },
+            ),
+        ).toEqual({ x: 40, y: 20, width: 460, height: 730 });
+        // Clamped at the minimum: the card stops, its right edge stays.
+        expect(
+            resizeBox('chat', start, { x: 'left' }, { x: 500, y: 0 }),
+        ).toEqual({ x: 140, y: 50, width: 360, height: 700 });
+    });
+
+    it("makes a chat's saved size its resting size, everywhere it's placed", () => {
+        const big = { ...chat('a'), size: { width: 600, height: 900 } };
+        expect(sizeOf(big)).toEqual({ width: 600, height: 900 });
+        expect(sizeOf(chat('b'))).toEqual(WINDOW_SIZES.chat);
+        const placed = placeWindows([big, chat('b')]);
+        expect(placed[0]).toMatchObject({ width: 600, height: 900 });
+        expect(placed[1]!.x).toBe(600 + WINDOW_GAP);
+        expect(
+            placeNewWindow([{ x: 0, kind: 'chat', width: 600 }], 'chat').x,
+        ).toBe(600 + WINDOW_GAP);
     });
 });
