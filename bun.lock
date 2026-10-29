@@ -32,7 +32,7 @@
         "@react-email/render": "^2.1.0",
         "@react-router/node": "8.4.0",
         "@react-router/serve": "8.4.0",
-        "@sethdavis512/trellis": "^0.1.0",
+        "@sethdavis512/trellis": "^0.1.1",
         "@tailwindcss/typography": "^0.5.20",
         "@tanstack/charts": "^1.1.0",
         "@trigger.dev/sdk": "^4.6.4",
@@ -579,7 +579,7 @@
 
     "@selderee/plugin-htmlparser2": ["@selderee/plugin-htmlparser2@0.11.0", "", { "dependencies": { "domhandler": "^5.0.3", "selderee": "^0.11.0" } }, "sha512-P33hHGdldxGabLFjPPpaTxVolMrzrcegejx+0GxjrIb9Zv48D8yAIA/QTDR2dFl7Uz7urX8aX6+5bCZslr+gWQ=="],
 
-    "@sethdavis512/trellis": ["@sethdavis512/trellis@0.1.0", "", { "dependencies": { "d3-drag": "3.0.0", "d3-selection": "3.0.0", "d3-zoom": "3.0.0" }, "peerDependencies": { "react": ">=18", "react-dom": ">=18" } }, "sha512-8mEKZ4ch1afQI9Jzx3f3fcICWZV7KVSzFrmObxeagVgPsVJKAK3O0tcUYZfaRYhAsV8DNlueZhMFyErdytWNUQ=="],
+    "@sethdavis512/trellis": ["@sethdavis512/trellis@0.1.1", "", { "dependencies": { "d3-drag": "3.0.0", "d3-selection": "3.0.0", "d3-zoom": "3.0.0" }, "peerDependencies": { "react": ">=18", "react-dom": ">=18" } }, "sha512-xJOG7ruKM4cn4JnW/7OGYErwbnMM6tsSN0/vSTKQzF9/N0WcQUacLMoL+fzyJKNnDht/pqhEzHL45NUoZQmT8w=="],
 
     "@sindresorhus/merge-streams": ["@sindresorhus/merge-streams@4.0.0", "", {}, "sha512-tlqY9xq5ukxTUZBmoOp+m61cqwQD5pHJtFY3Mn8CA8ps6yghLH/Hw8UPdqg4OLmFW3IFlcXnQNmo/dh8HzXYIQ=="],
 

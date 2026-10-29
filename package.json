@@ -76,7 +76,7 @@
         "@react-email/render": "^2.1.0",
         "@react-router/node": "8.4.0",
         "@react-router/serve": "8.4.0",
-        "@sethdavis512/trellis": "^0.1.0",
+        "@sethdavis512/trellis": "^0.1.1",
         "@tailwindcss/typography": "^0.5.20",
         "@tanstack/charts": "^1.1.0",
         "@trigger.dev/sdk": "^4.6.4",
